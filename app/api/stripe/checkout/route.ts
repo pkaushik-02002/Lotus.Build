@@ -28,12 +28,12 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "Invalid idToken" }, { status: 401 })
   }
 
-  const priceId = body.priceId as string
+  const priceId = typeof body.priceId === "string" ? body.priceId : null
   const successUrl = body.successUrl as string
   const cancelUrl = body.cancelUrl as string
 
-  if (!priceId || typeof priceId !== "string") {
-    return Response.json({ error: "Missing priceId" }, { status: 400 })
+  if (!priceId) {
+    return Response.json({ error: "Missing priceId (get it from /api/stripe/plans)" }, { status: 400 })
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000"

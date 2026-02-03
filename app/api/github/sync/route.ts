@@ -17,7 +17,11 @@ function slugifyRepoName(name: string): string {
 async function getProject(projectId: string) {
   const snap = await adminDb.collection("projects").doc(projectId).get()
   if (!snap.exists) return null
-  const data = snap.data() as { name?: string; files?: { path: string; content: string }[] }
+  const data = snap.data() as {
+    name?: string
+    files?: { path: string; content: string }[]
+    githubRepoFullName?: string
+  }
   const files = Array.isArray(data?.files) ? data.files : null
   return { data, files }
 }
@@ -66,7 +70,7 @@ export async function POST(req: Request) {
     }
 
     const { data: projectData, files } = project
-    let owner: string
+    let owner: string | undefined
     let repoName: string
     let repoFullName: string
 
@@ -80,10 +84,10 @@ export async function POST(req: Request) {
       repoFullName = projectData.githubRepoFullName
     } else {
       const name = (projectData?.name || "").trim() || "Untitled Project"
-      repoName = slugifyRepoName(name) || `builder-studio-${projectId.slice(0, 8)}`
+      repoName = slugifyRepoName(name) || `buildkit-${projectId.slice(0, 8)}`
       const createRes = await githubRequest(token, "POST", "/user/repos", {
         name: repoName,
-        description: `Built with Builder Studio: ${name.slice(0, 200)}`,
+        description: `Built with BuildKit: ${name.slice(0, 200)}`,
         private: false,
         auto_init: false,
       })
@@ -93,10 +97,10 @@ export async function POST(req: Request) {
         const err = await createRes.json().catch(() => ({}))
         const msg = err?.message || err?.errors?.[0]?.message || await createRes.text()
         if (createRes.status === 422 && /name already exists/i.test(String(msg))) {
-          repoName = `builder-studio-${projectId.slice(0, 8)}`
+          repoName = `buildkit-${projectId.slice(0, 8)}`
           const retryRes = await githubRequest(token, "POST", "/user/repos", {
             name: repoName,
-            description: `Built with Builder Studio`,
+            description: `Built with BuildKit`,
             private: false,
             auto_init: false,
           })
@@ -139,7 +143,7 @@ export async function POST(req: Request) {
       }
 
       const putRes = await githubRequest(token, "PUT", `/repos/${owner}/${repoName}/contents/${encodedPath}`, {
-        message: `Sync from Builder Studio: ${path}`,
+        message: `Sync from BuildKit: ${path}`,
         content,
         ...(sha ? { sha } : {}),
       })

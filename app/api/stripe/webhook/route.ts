@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import Stripe from "stripe"
 import { adminDb } from "@/lib/firebase-admin"
+import { Timestamp } from "firebase-admin/firestore"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!
@@ -83,14 +84,51 @@ async function syncSubscriptionToUser(subscriptionId: string, uid: string) {
   await setUserPlan(uid, planId, tokensPerMonth, subscriptionId)
 }
 
+function getFirstDayOfNextMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 1)
+}
+
 async function setUserPlan(uid: string, planId: string, tokensPerMonth: number, stripeSubscriptionId: string | null) {
   const userRef = adminDb.collection("users").doc(uid)
   const snap = await userRef.get()
   if (!snap.exists) return
 
   const data = snap.data() as any
-  const currentUsed = data?.tokenUsage?.used ?? 0
-  const newRemaining = Math.max(0, tokensPerMonth - currentUsed)
+  const prevPlanId = data?.planId || "free"
+  const existingUsage = data?.tokenUsage || {}
+  const now = new Date()
+
+  let used = typeof existingUsage.used === "number" ? existingUsage.used : 0
+  let remaining =
+    typeof existingUsage.remaining === "number"
+      ? existingUsage.remaining
+      : Math.max(0, tokensPerMonth - used)
+
+  let periodStartRaw = existingUsage.periodStart
+  let periodEndRaw = existingUsage.periodEnd
+
+  const periodStart =
+    periodStartRaw && typeof (periodStartRaw as any).toDate === "function"
+      ? (periodStartRaw as any).toDate()
+      : periodStartRaw
+      ? new Date(periodStartRaw)
+      : now
+
+  const periodEnd =
+    periodEndRaw && typeof (periodEndRaw as any).toDate === "function"
+      ? (periodEndRaw as any).toDate()
+      : periodEndRaw
+      ? new Date(periodEndRaw)
+      : getFirstDayOfNextMonth(now)
+
+  const planChanged = prevPlanId !== planId
+
+  // If the user upgraded/downgraded plan, start a fresh monthly bucket
+  if (planChanged) {
+    used = 0
+    remaining = tokensPerMonth
+  }
+
   const planName = planId.charAt(0).toUpperCase() + planId.slice(1)
 
   await userRef.update({
@@ -98,8 +136,12 @@ async function setUserPlan(uid: string, planId: string, tokensPerMonth: number, 
     planName,
     tokensLimit: tokensPerMonth,
     ...(stripeSubscriptionId ? { stripeSubscriptionId } : {}),
-    "tokenUsage.used": currentUsed,
-    "tokenUsage.remaining": newRemaining,
+    tokenUsage: {
+      used,
+      remaining: Math.max(0, remaining),
+      periodStart: Timestamp.fromDate(planChanged ? now : periodStart),
+      periodEnd: Timestamp.fromDate(planChanged ? getFirstDayOfNextMonth(now) : periodEnd),
+    },
   })
   console.log("[Stripe webhook] Updated user", uid, "to plan", planId, "tokensLimit", tokensPerMonth)
 }

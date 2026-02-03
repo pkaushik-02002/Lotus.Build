@@ -78,7 +78,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { applyPatch } from "diff"
 import type { GeneratedFile, Message, Project, ProjectVisibility } from "./types"
 import { extractAgentMessage } from "./utils"
-import { ProjectErrorBoundary, ChatMessage, CodePanel } from "@/components/project"
+import { ProjectErrorBoundary, ChatMessage, CodePanel, PreviewWithVisualEdit } from "@/components/project"
 
 // Persists across Strict Mode remounts so only one sandbox run can update logs
 let sandboxRunIdCounter = 0
@@ -129,6 +129,7 @@ function ProjectContent() {
   const [previewRefreshHint, setPreviewRefreshHint] = useState<string | null>(null)
   const [editingTarget, setEditingTarget] = useState<{ kind: "prompt" } | { kind: "message"; index: number } | null>(null)
   const [mobileTab, setMobileTab] = useState<"chat" | "preview">("chat")
+  const [visualEditActive, setVisualEditActive] = useState(false)
   const [deployOpen, setDeployOpen] = useState(false)
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
   const [selectedIntegration, setSelectedIntegration] = useState<"all" | "github" | "netlify" | "vercel" | "supabase" | "vars">("all")
@@ -1895,7 +1896,7 @@ function ProjectContent() {
           {/* Desktop: Logo, Separator, Title with Dropdown */}
           <div className="hidden lg:flex items-center gap-3 min-w-0">
             <Link href="/" className="font-display text-base font-semibold text-zinc-100 hover:text-zinc-200 transition-colors flex-shrink-0">
-              BuilderStudio
+              BuildKit
             </Link>
             <div className="h-4 w-px bg-zinc-700" />
             <DropdownMenu>
@@ -2802,7 +2803,7 @@ function ProjectContent() {
                           <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-zinc-200 hover:text-zinc-100 underline">
                             vercel.com/account/tokens <ExternalLink className="w-3 h-3" />
                           </a>
-                          , create a new token (e.g. &quot;BuilderStudio&quot;), and paste it below.
+                          , create a new token (e.g. &quot;BuildKit&quot;), and paste it below.
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2 items-end">
                           {!vercelConnected ? (
@@ -3257,6 +3258,10 @@ function ProjectContent() {
                     isLoading={isGenerating}
                     placeholder="Ask for changes or describe what to build..."
                     onSubmit={(value, model) => handleSendMessage(value, model)}
+                    visualEditToggle={{
+                      active: visualEditActive,
+                      onToggle: () => setVisualEditActive((v) => !v),
+                    }}
                   />
                 </div>
                 ) : (
@@ -3343,12 +3348,19 @@ function ProjectContent() {
                           </div>
                         </div>
                       )}
-                      <iframe
-                        key={previewKey}
+                      <PreviewWithVisualEdit
                         src={getPreviewUrl() || project.sandboxUrl}
-                        className="w-full flex-1 min-h-0 border-0"
-                        title="Preview"
-                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                        canEdit={canEdit}
+                        enabled={visualEditActive}
+                        onEditWithAI={(description, userRequest) => {
+                          setMobileTab("chat")
+                          const prompt = userRequest
+                            ? `Edit the selected element in the preview: ${description}. User request: ${userRequest}`
+                            : `Edit the selected element in the preview: ${description}. Make a small improvement.`
+                          handleSendMessage(prompt)
+                        }}
+                        className="w-full flex-1 min-h-0"
+                        iframeKey={previewKey}
                       />
                       {hasSuccessfulPreview && (
                         <div className="flex-shrink-0 border-t border-zinc-800/50 bg-zinc-950/60 px-3 py-2 flex items-center justify-between">
@@ -3539,6 +3551,10 @@ function ProjectContent() {
                   isLoading={isGenerating}
                   placeholder="Ask for changes or describe what to build..."
                   onSubmit={(value, model) => handleSendMessage(value, model)}
+                  visualEditToggle={{
+                    active: visualEditActive,
+                    onToggle: () => setVisualEditActive((v) => !v),
+                  }}
                 />
               </div>
               ) : (
@@ -3785,12 +3801,18 @@ function ProjectContent() {
                               </div>
                             </div>
                           )}
-                          <iframe
-                            key={previewKey}
+                          <PreviewWithVisualEdit
                             src={getPreviewUrl() || project.sandboxUrl}
-                            className="w-full flex-1 min-h-0 border-0"
-                            title="Preview"
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                            canEdit={canEdit}
+                            enabled={visualEditActive}
+                            onEditWithAI={(description, userRequest) => {
+                              const prompt = userRequest
+                                ? `Edit the selected element in the preview: ${description}. User request: ${userRequest}`
+                                : `Edit the selected element in the preview: ${description}. Make a small improvement.`
+                              handleSendMessage(prompt)
+                            }}
+                            className="w-full flex-1 min-h-0"
+                            iframeKey={previewKey}
                           />
                           {hasSuccessfulPreview && (
                             <div className="flex-shrink-0 border-t border-zinc-800/50 bg-zinc-950/60 px-3 py-2 flex items-center justify-between">

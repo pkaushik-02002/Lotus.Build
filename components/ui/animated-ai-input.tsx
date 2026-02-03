@@ -2,9 +2,10 @@
 
 import React from "react";
 
-import { ArrowRight, Bot, Check, ChevronDown, Paperclip, Loader2 } from "lucide-react";
+import { ArrowRight, Bot, Check, ChevronDown, Paperclip, Loader2, MousePointer2 } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -12,8 +13,10 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { motion, AnimatePresence } from "framer-motion";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -94,6 +97,8 @@ const OPENAI_ICON = (
         placeholder?: string;
         isLoading?: boolean;
         compact?: boolean;
+        /** When provided (chat mode), shows a visual-edit toggle; only active when user turns it on */
+        visualEditToggle?: { active: boolean; onToggle: () => void };
     }
 
     export function AnimatedAIInput({
@@ -102,16 +107,27 @@ const OPENAI_ICON = (
         placeholder = "What can I help you build today?",
         isLoading = false,
         compact = false,
+        visualEditToggle,
     }: AnimatedAIInputProps) {
         const router = useRouter();
-        const { user } = useAuth();
+        const { user, userData } = useAuth();
         const [value, setValue] = useState("");
         const [isCreating, setIsCreating] = useState(false);
         const { textareaRef, adjustHeight } = useAutoResizeTextarea({
             minHeight: compact ? 48 : 72,
             maxHeight: compact ? 150 : 300,
         });
+        const [autoMode, setAutoMode] = useState(true);
         const [selectedModel, setSelectedModel] = useState("GPT-4-1 Mini");
+        const isPaidUser = userData?.planId && userData.planId !== "free";
+        const effectiveModel = autoMode ? "GPT-4-1 Mini" : selectedModel;
+
+        // Free users cannot use custom model; keep Auto on
+        useEffect(() => {
+            if (!isPaidUser) setAutoMode(true);
+        }, [isPaidUser]);
+
+        const PENDING_CREATE_KEY = "buildkit_pending_create";
 
         const handleSubmit = async () => {
             if (!value.trim() || isCreating || isLoading) return;
@@ -124,11 +140,20 @@ const OPENAI_ICON = (
                 return;
             }
 
+            if (mode === "create" && !user) {
+                sessionStorage.setItem(
+                    PENDING_CREATE_KEY,
+                    JSON.stringify({ prompt: value.trim(), model: effectiveModel })
+                );
+                router.push("/login?redirect=" + encodeURIComponent("/"));
+                return;
+            }
+
             setIsCreating(true);
             try {
                 const docRef = await addDoc(collection(db, "projects"), {
                     prompt: value.trim(),
-                    model: selectedModel,
+                    model: effectiveModel,
                     status: "pending",
                     createdAt: serverTimestamp(),
                     messages: [],
@@ -246,26 +271,21 @@ const OPENAI_ICON = (
                                                 >
                                                     <AnimatePresence mode="wait">
                                                         <motion.div
-                                                            key={selectedModel}
-                                                            initial={{
-                                                                opacity: 0,
-                                                                y: -5,
-                                                            }}
-                                                            animate={{
-                                                                opacity: 1,
-                                                                y: 0,
-                                                            }}
-                                                            exit={{
-                                                                opacity: 0,
-                                                                y: 5,
-                                                            }}
-                                                            transition={{
-                                                                duration: 0.15,
-                                                            }}
+                                                            key={autoMode ? "auto" : selectedModel}
+                                                            initial={{ opacity: 0, y: -5 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            exit={{ opacity: 0, y: 5 }}
+                                                            transition={{ duration: 0.15 }}
                                                             className="flex items-center gap-1"
                                                         >
-                                                            {MODEL_ICONS[selectedModel]}
-                                                            {selectedModel}
+                                                            {autoMode ? (
+                                                                <>Auto</>
+                                                            ) : (
+                                                                <>
+                                                                    {MODEL_ICONS[selectedModel]}
+                                                                    {selectedModel}
+                                                                </>
+                                                            )}
                                                             <ChevronDown className="w-3 h-3 opacity-50" />
                                                         </motion.div>
                                                     </AnimatePresence>
@@ -273,33 +293,97 @@ const OPENAI_ICON = (
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent
                                                 className={cn(
-                                                    "min-w-[10rem]",
+                                                    "min-w-[14rem]",
                                                     "border-zinc-700",
                                                     "bg-zinc-900"
                                                 )}
+                                                align="start"
                                             >
-                                                {AI_MODELS.map((model) => (
-                                                    <DropdownMenuItem
-                                                        key={model}
-                                                        onSelect={() =>
-                                                            setSelectedModel(model)
-                                                        }
-                                                        className="flex items-center justify-between gap-2 text-zinc-300 focus:text-zinc-100 focus:bg-zinc-800"
+                                                {/* Auto row: label, description, switch — prevent close on interaction */}
+                                                <div
+                                                    className="flex items-center justify-between gap-3 px-2 py-2 rounded-md"
+                                                    onPointerDown={(e) => e.stopPropagation()}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                                        <span className="text-xs font-medium text-zinc-100">Auto</span>
+                                                        <span className="text-[10px] text-zinc-500">
+                                                            Balanced quality and speed, recommended for most tasks
+                                                        </span>
+                                                    </div>
+                                                    <Switch
+                                                        checked={autoMode}
+                                                        onCheckedChange={(checked) => {
+                                                            if (isPaidUser) setAutoMode(checked);
+                                                        }}
+                                                        disabled={!isPaidUser}
+                                                        className="data-[state=checked]:bg-amber-500 shrink-0"
+                                                    />
+                                                </div>
+                                                <DropdownMenuSeparator className="bg-zinc-700" />
+                                                {isPaidUser && !autoMode && (
+                                                    <>
+                                                        {AI_MODELS.map((model) => (
+                                                            <DropdownMenuItem
+                                                                key={model}
+                                                                onSelect={() => setSelectedModel(model)}
+                                                                className="flex items-center justify-between gap-2 text-zinc-300 focus:text-zinc-100 focus:bg-zinc-800"
+                                                            >
+                                                                <div className="flex items-center gap-2">
+                                                                    {MODEL_ICONS[model] || (
+                                                                        <Bot className="w-4 h-4 opacity-50" />
+                                                                    )}
+                                                                    <span>{model}</span>
+                                                                </div>
+                                                                {selectedModel === model && (
+                                                                    <Check className="w-4 h-4 text-zinc-400" />
+                                                                )}
+                                                            </DropdownMenuItem>
+                                                        ))}
+                                                    </>
+                                                )}
+                                                {!isPaidUser && (
+                                                    <div
+                                                        className="rounded-lg border border-zinc-700/80 bg-zinc-800/50 px-3 py-2.5"
+                                                        onPointerDown={(e) => e.stopPropagation()}
+                                                        onClick={(e) => e.stopPropagation()}
                                                     >
-                                                        <div className="flex items-center gap-2">
-                                                            {MODEL_ICONS[model] || (
-                                                                <Bot className="w-4 h-4 opacity-50" />
-                                                            )}
-                                                            <span>{model}</span>
-                                                        </div>
-                                                        {selectedModel === model && (
-                                                            <Check className="w-4 h-4 text-zinc-400" />
-                                                        )}
-                                                    </DropdownMenuItem>
-                                                ))}
+                                                        <p className="text-xs font-medium text-zinc-300">
+                                                            Choose a specific model
+                                                        </p>
+                                                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                                                            Available on paid plans
+                                                        </p>
+                                                        <Link
+                                                            href="/pricing"
+                                                            className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 transition-colors"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            Upgrade to Pro
+                                                            <ArrowRight className="w-3 h-3" />
+                                                        </Link>
+                                                    </div>
+                                                )}
                                             </DropdownMenuContent>
                                         </DropdownMenu>
                                         <div className="h-4 w-px bg-zinc-700 mx-0.5" />
+                                        {mode === "chat" && visualEditToggle && (
+                                            <button
+                                                type="button"
+                                                onClick={visualEditToggle.onToggle}
+                                                className={cn(
+                                                    "rounded-lg p-2 transition-colors",
+                                                    "focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-zinc-500",
+                                                    visualEditToggle.active
+                                                        ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"
+                                                        : "bg-zinc-800/50 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700"
+                                                )}
+                                                aria-label={visualEditToggle.active ? "Visual edit on (click to turn off)" : "Visual edit off (click to select elements in preview)"}
+                                                title={visualEditToggle.active ? "Visual edit on" : "Visual edit off"}
+                                            >
+                                                <MousePointer2 className="w-4 h-4" />
+                                            </button>
+                                        )}
                                         <label
                                             className={cn(
                                                 "rounded-lg p-2 bg-zinc-800/50 cursor-pointer",

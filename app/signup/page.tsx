@@ -97,7 +97,7 @@ export default function SignupPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="text-2xl font-bold text-zinc-100">
-            Builder Studio
+            BuildKit
           </Link>
           <p className="text-zinc-500 mt-2">Create your account</p>
         </div>

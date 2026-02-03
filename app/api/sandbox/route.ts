@@ -446,6 +446,148 @@ function sanitizeEnvVar(key: string, value: string): { key: string; value: strin
   return { key, value: escaped }
 }
 
+/** Visual edit client script: adds data-bstudio-id to elements, posts hover/select to parent for overlay + "Edit with AI". */
+const VISUAL_EDIT_SCRIPT = `
+(function() {
+  var idCounter = 0;
+  function addIds(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (!root.hasAttribute || root.hasAttribute('data-bstudio-id')) return;
+    root.setAttribute('data-bstudio-id', 'bstudio-' + (idCounter++));
+    var c = root.firstChild;
+    while (c) { addIds(c); c = c.nextSibling; }
+  }
+  function run() {
+    addIds(document.body);
+  }
+  if (document.body) run();
+  else document.addEventListener('DOMContentLoaded', run);
+  var obs = new MutationObserver(function(mutations) {
+    mutations.forEach(function(m) {
+      m.addedNodes.forEach(function(n) {
+        if (n.nodeType === 1) addIds(n);
+      });
+    });
+  });
+  document.addEventListener('DOMContentLoaded', function() {
+    obs.observe(document.body, { childList: true, subtree: true });
+  });
+  window.bstudio = {
+    onHover: function(id, rect) {
+      window.parent.postMessage({
+        type: 'preview-hover',
+        id: id,
+        rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+        viewport: { w: window.innerWidth, h: window.innerHeight }
+      }, '*');
+    },
+    onSelect: function(id, rect, desc) {
+      window.parent.postMessage({
+        type: 'preview-select',
+        id: id,
+        rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+        viewport: { w: window.innerWidth, h: window.innerHeight },
+        description: desc || null
+      }, '*');
+    }
+  };
+  var lastHover = null;
+  document.addEventListener('mousemove', function(e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-bstudio-id]') : null;
+    if (el && el.getAttribute('data-bstudio-id') !== lastHover) {
+      lastHover = el.getAttribute('data-bstudio-id');
+      var r = el.getBoundingClientRect();
+      window.bstudio.onHover(lastHover, { x: r.left, y: r.top, width: r.width, height: r.height });
+    }
+  }, true);
+  document.addEventListener('click', function(e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-bstudio-id]') : null;
+    if (el) {
+      e.preventDefault();
+      e.stopPropagation();
+      var r = el.getBoundingClientRect();
+      var txt = (el.textContent || '').trim().slice(0, 80);
+      var desc = (el.tagName || 'element') + (txt ? ' "' + txt + '"' : '');
+      var id = el.getAttribute('data-bstudio-id');
+      var content = (el.textContent || '').trim();
+      var cs = window.getComputedStyle(el);
+      var styles = {
+        fontFamily: cs.fontFamily,
+        fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight,
+        color: cs.color,
+        backgroundColor: cs.backgroundColor,
+        textAlign: cs.textAlign,
+        lineHeight: cs.lineHeight,
+        letterSpacing: cs.letterSpacing,
+        fontStyle: cs.fontStyle,
+        textDecoration: cs.textDecoration,
+        textTransform: cs.textTransform,
+        opacity: cs.opacity,
+        paddingTop: cs.paddingTop,
+        paddingRight: cs.paddingRight,
+        paddingBottom: cs.paddingBottom,
+        paddingLeft: cs.paddingLeft,
+        marginTop: cs.marginTop,
+        marginRight: cs.marginRight,
+        marginBottom: cs.marginBottom,
+        marginLeft: cs.marginLeft,
+        borderWidth: cs.borderWidth,
+        borderStyle: cs.borderStyle,
+        borderColor: cs.borderColor,
+        borderRadius: cs.borderRadius,
+        boxShadow: cs.boxShadow
+      };
+      window.parent.postMessage({
+        type: 'preview-select',
+        id: id,
+        rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+        viewport: { w: window.innerWidth, h: window.innerHeight },
+        description: desc,
+        snapshot: { content: content, styles: styles }
+      }, '*');
+    }
+  }, true);
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (!d || d.type !== 'bstudio-apply-design' || !d.id) return;
+    var el = document.querySelector('[data-bstudio-id="' + d.id + '"]');
+    if (!el) return;
+    if (d.payload) {
+      if (d.payload.content !== undefined) el.textContent = d.payload.content;
+      if (d.payload.styles && typeof d.payload.styles === 'object') {
+        for (var k in d.payload.styles) {
+          var v = d.payload.styles[k];
+          if (v === undefined || v === '') el.style.removeProperty(k.replace(/([A-Z])/g, '-$1').toLowerCase());
+          else el.style[k] = v;
+        }
+      }
+    }
+  });
+})();
+`
+
+async function injectVisualEditScript(sandbox: Sandbox): Promise<void> {
+  const indexPath = `${PROJECT_DIR}/index.html`
+  try {
+    const content = await readFileMaybe(sandbox, indexPath)
+    if (!content || !content.includes("</body>")) return
+    // Ensure script content never contains literal </script> so the HTML parser doesn't close early
+    const scriptEscaped = VISUAL_EDIT_SCRIPT.replace(/<\/script/gi, "<\\/script")
+    // Use proper closing tag so parse5/HTML parser sees end of script (do not use <\/script> in file)
+    const scriptClose = "</scr" + "ipt>"
+    const injected = content.replace(
+      "</body>",
+      `<script>${scriptEscaped}${scriptClose}\n</body>`
+    )
+    if (injected === content) return
+    await sandbox.files.write(indexPath, injected)
+    console.log("[sandbox] Injected visual-edit client script into index.html")
+  } catch (e) {
+    console.warn("[sandbox] Could not inject visual-edit script:", e)
+  }
+}
+
 export async function POST(req: Request) {
   if (!process.env.E2B_API_KEY) {
     return Response.json({ error: "E2B API key not configured" }, { status: 500 })
@@ -454,12 +596,14 @@ export async function POST(req: Request) {
   let files: InputFile[] = []
   let sandboxId: string | undefined
   let projectId: string | undefined
+  let injectVisualEdit = true
 
   try {
     const body = await req.json()
     files = body?.files
     sandboxId = body?.sandboxId
     projectId = typeof body?.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined
+    if (body && typeof body.injectVisualEdit === "boolean") injectVisualEdit = body.injectVisualEdit
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 })
   }
@@ -625,6 +769,9 @@ export async function POST(req: Request) {
           }
           await sandbox.files.write(fullPath, file.content)
         }
+
+        // Visual edit: inject client script only for live preview (skip when building for deploy)
+        if (injectVisualEdit) await injectVisualEditScript(sandbox)
         
         send({ type: "step", step: "write", status: "success", message: "Files written" })
 

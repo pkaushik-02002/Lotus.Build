@@ -1,0 +1,27 @@
+import { MetadataRoute } from "next"
+
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://buildkit.app"
+
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: [
+      {
+        userAgent: "*",
+        allow: "/",
+        disallow: ["/api/", "/project/", "/settings"],
+      },
+      {
+        userAgent: "Googlebot",
+        allow: "/",
+        disallow: ["/api/", "/project/", "/settings"],
+      },
+      {
+        userAgent: "Bingbot",
+        allow: "/",
+        disallow: ["/api/", "/project/", "/settings"],
+      },
+    ],
+    sitemap: `${baseUrl}/sitemap.xml`,
+    host: baseUrl,
+  }
+}

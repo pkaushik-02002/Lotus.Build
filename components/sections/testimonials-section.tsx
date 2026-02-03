@@ -6,55 +6,46 @@ import { TestimonialsColumn } from "@/components/ui/testimonials-column"
 const testimonials = [
   {
     text: "I built a complete SaaS dashboard in 30 minutes. What would have taken weeks of coding was done in a single prompt session.",
-    image: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face",
     name: "Sarah Chen",
     role: "Indie Hacker",
   },
   {
-    text: "Builder Studio is like having a senior developer on demand. The AI understands exactly what I want to build.",
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face",
+    text: "BuildKit is like having a senior developer on demand. The AI understands exactly what I want to build.",
     name: "Marcus Johnson",
     role: "Startup Founder",
   },
   {
-    text: "We use Builder Studio to prototype client projects. It's 10x faster than traditional development.",
-    image: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face",
+    text: "We use BuildKit to prototype client projects. It's 10x faster than traditional development.",
     name: "Emily Rodriguez",
     role: "Agency Owner",
   },
   {
     text: "As a non-developer, I finally built my dream app. The AI handles all the technical complexity.",
-    image: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face",
     name: "David Park",
     role: "Product Designer",
   },
   {
     text: "The code quality is production-ready. I was able to deploy directly to Vercel without any changes.",
-    image: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=face",
     name: "Aisha Patel",
     role: "Full-Stack Developer",
   },
   {
-    text: "Builder Studio helped us validate 5 product ideas in a single week. It's a game-changer for MVPs.",
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face",
+    text: "BuildKit helped us validate 5 product ideas in a single week. It's a game-changer for MVPs.",
     name: "James Wilson",
     role: "CEO at LaunchPad",
   },
   {
     text: "The iterative chat interface makes it easy to refine and improve your app with each message.",
-    image: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&h=150&fit=crop&crop=face",
     name: "Lisa Thompson",
     role: "UX Engineer",
   },
   {
     text: "I migrated from another AI builder and the difference is night and day. Much better code output.",
-    image: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&h=150&fit=crop&crop=face",
     name: "Michael Brown",
     role: "Software Engineer",
   },
   {
     text: "Built our entire marketing site and admin panel in one afternoon. Absolutely incredible tool.",
-    image: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop&crop=face",
     name: "Rachel Kim",
     role: "Marketing Director",
   },

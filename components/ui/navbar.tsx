@@ -66,7 +66,7 @@ export function Navbar() {
       <nav className="max-w-5xl mx-auto flex items-center justify-between h-12 px-6 rounded-full bg-zinc-900/70 border border-zinc-800/50 backdrop-blur-md">
         {/* Logo */}
         <Link href="/" className="font-display text-lg font-semibold text-zinc-100 shrink-0">
-          Builder Studio
+          BuildKit
         </Link>
 
         {/* Center Nav Links */}

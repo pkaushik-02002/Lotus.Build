@@ -7,10 +7,12 @@ import { PricingSection } from "@/components/sections/pricing-section"
 import { CtaSection } from "@/components/sections/cta-section"
 import { FooterSection } from "@/components/sections/footer-section"
 import { LenisProvider } from "@/components/providers/lenis-provider"
+import { CreateAfterLogin } from "@/components/create-after-login"
 
 export default function Home() {
   return (
     <LenisProvider>
+      <CreateAfterLogin />
       <main className="min-h-screen bg-zinc-950">
         <Navbar />
         <HeroSection />

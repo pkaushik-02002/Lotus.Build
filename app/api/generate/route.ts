@@ -101,6 +101,8 @@ export async function POST(req: Request) {
 
 UI STANDARD: When adding or changing UI, keep it modern and polished—distinctive typography, intentional colors, generous spacing, subtle motion (Framer Motion). Avoid generic "AI slop" aesthetics. Match or elevate the existing design language.
 
+RESPONSIVE: Preserve or improve responsiveness on all devices. Use Tailwind breakpoints (sm:, md:, lg:) for layout and typography; avoid fixed widths that break on small screens; ensure touch targets are at least 44px on mobile; prevent horizontal overflow (max-w-full, min-w-0, overflow-hidden where needed). Generated UI must work on phone, tablet, and desktop.
+
 CRITICAL: Do NOT regenerate the entire project. Output ONLY:
 1. One AGENT_MESSAGE (see below).
 2. For each file that you MODIFY: output that file in ===FILE: path=== ... ===END_FILE===. Inside the block you may use EITHER:
@@ -134,9 +136,18 @@ MODERN UI — BEAT THE COMPETITION (MANDATORY):
 - Typography: Use distinctive, readable fonts. Prefer Google Fonts like DM Sans, Outfit, Plus Jakarta Sans, Syne, or similar for headings; pair with a clean body font. Strong hierarchy: clear heading sizes, line-height, and letter-spacing.
 - Color: Choose an intentional palette (e.g. deep neutrals with one accent, or a bold brand color with contrast). Use semantic contrast (WCAG AA). Prefer custom palettes over default Tailwind grays alone.
 - Layout: Generous whitespace, clear sections, and a clear visual hierarchy. Use grid/flex intentionally; avoid cramped or monotonous layouts. Consider asymmetry or bold hero sections where it fits.
-- Motion: Add subtle, purposeful animations (hover states, scroll-in, staggered reveals) with Framer Motion. Keep animations fast and smooth (200–400ms). No gratuitous motion.
-- Polish: Rounded corners, subtle shadows, borders where they add clarity. Responsive from mobile to desktop. Touch-friendly targets on mobile.
+- Motion: Add subtle, purposeful animations using framer motion (hover states, scroll-in, staggered reveals). Keep animations fast and smooth (200–400ms). No gratuitous motion.
+- Polish: Rounded corners, subtle shadows, borders where they add clarity. Touch-friendly targets on mobile.
 - Overall: The result should feel like a product from a top design team—memorable, cohesive, and professional.
+
+RESPONSIVE — ALL DEVICES (MANDATORY):
+- Every generated site MUST work on mobile, tablet, and desktop. No exceptions.
+- index.html MUST include: <meta name="viewport" content="width=device-width, initial-scale=1" />.
+- Use a mobile-first approach: base styles for small screens, then Tailwind breakpoints (sm:, md:, lg:, xl:) to enhance for larger screens.
+- Avoid fixed pixel widths for main containers; use max-w-*, w-full, and flex/grid that adapts. Use min-w-0 and overflow-hidden where needed to prevent horizontal scroll.
+- Buttons and interactive elements MUST be at least 44x44px on touch targets (e.g. min-h-[44px] min-w-[44px] or p-3) on mobile.
+- Typography: use responsive text sizes (e.g. text-base sm:text-lg), and ensure line-length stays readable on narrow viewports.
+- Test mentally for: 320px (phone), 768px (tablet), 1024px+ (desktop). The layout must not break or overflow at any width.
 
 You must respond with a STREAMING file format. Output each file in this exact format:
 

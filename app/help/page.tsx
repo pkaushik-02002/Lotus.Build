@@ -21,7 +21,7 @@ const faqs = [
     a: "From the home page, type your idea in the input and press Enter or click the build button. We'll generate a full-stack app based on your description. You can then open the project to edit, preview, and deploy.",
   },
   {
-    q: "What can I build with Builder Studio?",
+    q: "What can I build with BuildKit?",
     a: "You can build web applications: landing pages, dashboards, SaaS UIs, e-commerce stores, and more. Describe what you want in plain English and the AI generates React/Next.js or Vite-based code with styling and structure.",
   },
   {
@@ -94,7 +94,7 @@ export default function HelpPage() {
           {/* Contact & resources */}
           <section className="grid sm:grid-cols-2 gap-4 sm:gap-6">
             <Link
-              href="mailto:support@builderstudio.example.com"
+              href="mailto:support@buildkit.example.com"
               className="rounded-2xl border border-zinc-800/50 bg-zinc-900/50 p-5 sm:p-6 hover:bg-zinc-800/50 hover:border-zinc-700/50 transition-colors group"
             >
               <div className="flex items-center gap-3 mb-3">
