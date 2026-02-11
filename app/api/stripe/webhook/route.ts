@@ -73,13 +73,15 @@ async function syncSubscriptionToUser(subscriptionId: string, uid: string) {
   }
 
   const price = sub.items.data[0]?.price
+  const quantity = Math.max(1, sub.items.data[0]?.quantity || 1)
   if (!price) return
 
   const product = price.product as Stripe.Product
   const productName = (product?.name || "").toLowerCase()
   const meta = (price as any).metadata || {}
   const planId = meta.plan_id || (productName.includes("pro") ? "pro" : productName.includes("team") ? "team" : "pro")
-  const tokensPerMonth = meta.tokens_per_month ? parseInt(meta.tokens_per_month, 10) : planId === "team" ? 500000 : 50000
+  const baseTokensPerMonth = meta.tokens_per_month ? parseInt(meta.tokens_per_month, 10) : planId === "team" ? 500000 : 50000
+  const tokensPerMonth = Math.max(1, baseTokensPerMonth) * quantity
 
   await setUserPlan(uid, planId, tokensPerMonth, subscriptionId)
 }

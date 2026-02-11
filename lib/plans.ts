@@ -60,6 +60,7 @@ export interface PlanTier {
   tokensPerMonth: number
   priceCents: number
   priceId: string | null
+  quantity: number
 }
 
 /**
@@ -70,13 +71,20 @@ export interface PlanTier {
  * tiers per plan.
  */
 export function getPaidPlanTiers(plan: PlanForApi): PlanTier[] {
-  return [
-    {
-      tokensPerMonth: plan.tokensPerMonth,
-      priceCents: plan.price,
-      priceId: plan.priceId,
-    },
-  ]
+  const baseTokens = Math.max(1, plan.tokensPerMonth || 1)
+  const basePrice = Math.max(0, plan.price || 0)
+
+  const multipliers =
+    baseTokens >= 500000
+      ? [1, 2, 3, 4]
+      : [1, 2, 3, 4, 6]
+
+  return multipliers.map((quantity) => ({
+    tokensPerMonth: baseTokens * quantity,
+    priceCents: basePrice * quantity,
+    priceId: plan.priceId,
+    quantity,
+  }))
 }
 
 /** Default plans when API returns empty or fails. */

@@ -63,7 +63,7 @@ export default function PricingPage() {
     }
   }
 
-  const handleSubscribe = async (priceId: string) => {
+  const handleSubscribe = async (priceId: string, quantity = 1) => {
     if (!user) {
       router.push("/login?redirect=/pricing")
       return
@@ -78,6 +78,7 @@ export default function PricingPage() {
         body: JSON.stringify({
           idToken,
           priceId,
+          quantity,
           successUrl: `${baseUrl}/projects?checkout=success`,
           cancelUrl: `${baseUrl}/pricing?checkout=cancelled`,
         }),
@@ -96,9 +97,19 @@ export default function PricingPage() {
   const displayPlans = plans.length > 0 ? plans : DEFAULT_PLANS_FALLBACK
 
   const currentPlanId = userData?.planId ? planIdForDisplay(userData.planId) : null
-  const planName = userData?.planName || (currentPlanId && PLAN_DISPLAY[currentPlanId as PlanId] ? "Free" : userData?.planId) || "Free"
+  const fallbackPlanName =
+    currentPlanId ? currentPlanId.charAt(0).toUpperCase() + currentPlanId.slice(1) : "Free"
+  const planName = userData?.planName || fallbackPlanName
   const tokensUsed = userData?.tokenUsage?.used ?? 0
-  const tokensLimit = userData?.tokensLimit ?? 0
+  const baselineLimitByPlan: Record<PlanId, number> = { free: 10000, pro: 50000, team: 500000 }
+  const tokensLimit = userData
+    ? Math.max(
+        0,
+        Number(userData.tokensLimit ?? 0),
+        Number(userData.tokenUsage?.used ?? 0) + Number(userData.tokenUsage?.remaining ?? 0),
+        currentPlanId ? baselineLimitByPlan[currentPlanId as PlanId] : 0
+      )
+    : 0
   const remaining = userData ? Math.max(0, userData.tokenUsage?.remaining ?? tokensLimit - tokensUsed) : 0
 
   return (
@@ -109,7 +120,7 @@ export default function PricingPage() {
 
       <Navbar />
       <div className="pt-20 sm:pt-28 pb-16 sm:pb-24 px-4 sm:px-6 lg:px-8 safe-area-inset-top safe-area-inset-bottom">
-        <div className="max-w-6xl mx-auto w-full min-w-0">
+        <div className="max-w-7xl mx-auto w-full min-w-0">
           <Link
             href="/"
             className="group inline-flex items-center gap-2 rounded-full border border-zinc-800/80 bg-zinc-900/40 px-4 py-2 text-sm text-zinc-400 transition-all duration-200 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200 mb-8 sm:mb-10 touch-manipulation"
@@ -120,7 +131,7 @@ export default function PricingPage() {
           </Link>
 
           {/* Header */}
-          <div className="mb-10 sm:mb-14">
+          <div className="mb-10 sm:mb-14 rounded-3xl border border-zinc-800/70 bg-zinc-900/35 p-6 sm:p-8 shadow-[0_30px_80px_-50px_rgba(0,0,0,0.95)]">
             <p className="mb-2 text-xs font-medium uppercase tracking-widest text-amber-400/90">
               Pricing
             </p>
@@ -218,6 +229,7 @@ export default function PricingPage() {
                 const selectedTier = tiers[selectedTierIndex] ?? null
                 const effectivePrice = selectedTier ? selectedTier.priceCents : plan.price
                 const effectiveTokens = selectedTier ? selectedTier.tokensPerMonth : plan.tokensPerMonth
+                const effectiveQuantity = selectedTier?.quantity ?? 1
                 const effectivePriceId = selectedTier?.priceId ?? plan.priceId
                 const hasPriceId = !!effectivePriceId
                 const { price: priceStr, period } = formatPrice(effectivePrice, plan.interval)
@@ -262,6 +274,9 @@ export default function PricingPage() {
                       </p>
                     ) : tiers.length > 0 ? (
                       <div className="mb-6">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                          Monthly tokens
+                        </p>
                         <Select
                           value={String(selectedTierIndex)}
                           onValueChange={(v) =>
@@ -354,7 +369,7 @@ export default function PricingPage() {
                               ? "bg-amber-500 text-zinc-950 hover:bg-amber-400"
                               : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
                           )}
-                          onClick={() => handleSubscribe(effectivePriceId!)}
+                          onClick={() => handleSubscribe(effectivePriceId!, effectiveQuantity)}
                         >
                           {checkoutLoading === effectivePriceId ? (
                             <Loader2 className="h-5 w-5 animate-spin" />

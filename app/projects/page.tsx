@@ -162,9 +162,11 @@ export default function ProjectsPage() {
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen w-full bg-zinc-950 text-zinc-100 flex flex-col lg:flex-row">
+      <div className="relative min-h-screen w-full bg-zinc-950 text-zinc-100 flex flex-col lg:flex-row overflow-hidden">
+        <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_8%_0%,rgba(255,255,255,0.06),transparent_32%),radial-gradient(circle_at_100%_15%,rgba(255,255,255,0.04),transparent_30%)]" />
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-20 [background:linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:56px_56px]" />
         {/* Left icon rail — hidden on mobile, visible lg+ */}
-        <aside className="hidden lg:flex w-16 flex-col items-center py-5 gap-4 border-r border-zinc-800/80 bg-zinc-950 shrink-0">
+        <aside className="hidden lg:flex w-16 flex-col items-center py-5 gap-4 border-r border-zinc-800/80 bg-zinc-950/80 backdrop-blur-sm shrink-0 relative z-10">
           <Link href="/" className="w-10 h-10 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-center text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/50 transition-colors">
             <Sparkles className="w-5 h-5" />
           </Link>
@@ -259,13 +261,13 @@ export default function ProjectsPage() {
           />
           <aside
             className={cn(
-              "fixed lg:static inset-y-0 left-0 z-50 w-full max-w-[320px] lg:max-w-none lg:w-80 flex flex-col border-r border-zinc-800/80 bg-zinc-950/95 lg:bg-zinc-950/50 backdrop-blur-xl lg:backdrop-blur-none transition-transform duration-300 ease-out",
-              isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+              "fixed lg:static inset-y-0 left-0 z-50 w-full max-w-[320px] lg:max-w-none lg:w-80 flex flex-col border-r border-zinc-800/80 bg-zinc-950/95 lg:bg-zinc-950/55 backdrop-blur-xl lg:backdrop-blur-md transition-transform duration-300 ease-out",
+              isSidebarOpen ? "translate-x-0 lg:w-80" : "-translate-x-full lg:translate-x-0 lg:w-0 lg:min-w-0 lg:overflow-hidden",
               !isSidebarOpen && "lg:flex" // always show on lg
             )}
           >
             <div className="flex flex-col h-full min-h-0">
-              <div className="p-4 lg:p-5 border-b border-zinc-800/80 shrink-0">
+              <div className="p-4 lg:p-5 border-b border-zinc-800/80 shrink-0 bg-zinc-950/60">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-semibold text-zinc-100">Your Projects</h2>
                   <button
@@ -279,7 +281,7 @@ export default function ProjectsPage() {
                 </div>
               </div>
 
-              <div className="px-4 py-3 shrink-0">
+              <div className="px-4 py-3 shrink-0 bg-zinc-950/30">
                 <div className="relative">
                   <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <Input
@@ -291,7 +293,7 @@ export default function ProjectsPage() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-6 space-y-6">
+              <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-6 pt-1 space-y-6">
                 {(["Today", "Yesterday", "Previous"] as const).map((key) => (
                   <div key={key} className="space-y-2.5">
                     <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">{key}</div>
@@ -302,7 +304,7 @@ export default function ProjectsPage() {
                         grouped[key].map((p) => (
                           <div
                             key={p.id}
-                            className="group/item flex items-stretch gap-1 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 transition-colors"
+                            className="group/item flex items-stretch gap-1 rounded-xl border border-zinc-800/80 bg-zinc-900/35 hover:bg-zinc-800/60 hover:border-zinc-700 transition-colors"
                           >
                             <button
                               type="button"
@@ -338,7 +340,7 @@ export default function ProjectsPage() {
               </div>
 
             {/* Pro Access pinned to bottom of sidebar */}
-            <div className="shrink-0 p-4 pt-3 border-t border-zinc-800/80">
+            <div className="shrink-0 p-4 pt-3 border-t border-zinc-800/80 bg-zinc-950/40">
               <div className="rounded-2xl border border-zinc-800/80 bg-gradient-to-br from-zinc-900/80 to-zinc-950/50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -360,15 +362,15 @@ export default function ProjectsPage() {
         </>
 
         {/* Main content */}
-        <main className="flex-1 min-w-0 flex flex-col">
+        <main className="flex-1 min-w-0 flex flex-col relative z-10">
           {/* Top bar */}
-          <header className="sticky top-0 z-30 h-14 lg:h-14 shrink-0 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md flex items-center gap-3 px-4 sm:px-6">
+          <header className="sticky top-0 z-30 h-14 lg:h-14 shrink-0 border-b border-zinc-800/80 bg-zinc-950/70 backdrop-blur-xl flex items-center gap-3 px-4 sm:px-6">
             <Button
               type="button"
               variant="ghost"
               size="sm"
               onClick={() => setIsSidebarOpen((v) => !v)}
-              className="h-9 w-9 p-0 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50 lg:flex"
+              className="hidden lg:inline-flex h-9 w-9 p-0 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50"
               aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
               <PanelLeft className="w-4 h-4" />
@@ -398,9 +400,9 @@ export default function ProjectsPage() {
 
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 lg:py-16">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12 lg:py-16">
               {/* Hero */}
-              <section className="text-center">
+              <section className="text-center rounded-3xl border border-zinc-800/70 bg-zinc-900/35 px-4 py-10 sm:px-8 sm:py-12 shadow-[0_30px_100px_-60px_rgba(0,0,0,0.95)]">
                 <h1 className="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight text-zinc-100">
                   What do you want to create?
                 </h1>
@@ -414,7 +416,7 @@ export default function ProjectsPage() {
               </div>
 
               {/* Workspace */}
-              <section className="mt-10 sm:mt-14">
+              <section className="mt-10 sm:mt-14 rounded-3xl border border-zinc-800/70 bg-zinc-900/30 p-4 sm:p-6 lg:p-8">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-5">
                   <div>
                     <h2 className="text-base sm:text-lg font-semibold text-zinc-100">Your Workspace</h2>
@@ -432,17 +434,17 @@ export default function ProjectsPage() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
                   {workspaceCards.map((p) => (
                     <button
                       key={p.id}
                       type="button"
                       onClick={() => router.push(`/project/${p.id}`)}
-                      className="text-left rounded-2xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/50 hover:border-zinc-700 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                      className="text-left rounded-2xl border border-zinc-800/80 bg-zinc-900/35 hover:bg-zinc-800/60 hover:border-zinc-700 transition-all duration-200 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
                     >
                       <Card className="border-0 bg-transparent shadow-none rounded-2xl">
                         <CardContent className="p-4 sm:p-5">
-                          <div className="h-24 sm:h-28 rounded-xl bg-gradient-to-br from-zinc-800/60 to-zinc-900/40 border border-zinc-800/60" />
+                          <div className="h-24 sm:h-28 rounded-xl bg-gradient-to-br from-zinc-800/60 via-zinc-900/30 to-zinc-900/60 border border-zinc-800/60" />
                           <div className="mt-4 flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
                               <div className="text-sm font-medium text-zinc-100 truncate">{projectTitle(p.prompt)}</div>
@@ -478,3 +480,8 @@ export default function ProjectsPage() {
     </ProtectedRoute>
   )
 }
+
+
+
+
+

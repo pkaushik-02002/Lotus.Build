@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
 
   let uid: string
   const authHeader = req.headers.get("authorization")
-  let body: { idToken?: string; priceId?: string; successUrl?: string; cancelUrl?: string } = {}
+  let body: { idToken?: string; priceId?: string; successUrl?: string; cancelUrl?: string; quantity?: number } = {}
   try {
     body = await req.json()
   } catch {
@@ -31,6 +31,10 @@ export async function POST(req: NextRequest) {
   const priceId = typeof body.priceId === "string" ? body.priceId : null
   const successUrl = body.successUrl as string
   const cancelUrl = body.cancelUrl as string
+  const quantity =
+    typeof body.quantity === "number" && Number.isFinite(body.quantity) && body.quantity > 0
+      ? Math.floor(body.quantity)
+      : 1
 
   if (!priceId) {
     return Response.json({ error: "Missing priceId (get it from /api/stripe/plans)" }, { status: 400 })
@@ -44,7 +48,7 @@ export async function POST(req: NextRequest) {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [{ price: priceId, quantity }],
       success_url: success,
       cancel_url: cancel,
       client_reference_id: uid,
