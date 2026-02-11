@@ -10,7 +10,7 @@ import {
   sendPasswordResetEmail,
   type User,
 } from "firebase/auth"
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp, onSnapshot, Timestamp } from "firebase/firestore"
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp, onSnapshot, Timestamp, collection } from "firebase/firestore"
 import { auth, db, googleProvider, githubProvider, type UserPlan, PLAN_TOKEN_LIMITS, DEFAULT_PLANS } from "@/lib/firebase"
 
 interface TokenUsage {
@@ -30,12 +30,25 @@ interface UserData {
   tokenUsage: TokenUsage
   tokensLimit: number
   createdAt: Date
+  currentWorkspaceId?: string
+}
+
+interface Workspace {
+  id: string
+  name: string
+  slug: string
+  ownerId: string
+  createdAt: Date
+  updatedAt: Date
 }
 
 interface AuthContextType {
   user: User | null
   userData: UserData | null
+  workspaces: Workspace[]
+  currentWorkspace: Workspace | null
   loading: boolean
+  switchWorkspace: (workspaceId: string) => Promise<void>
   /** Returns Bearer header when auth.currentUser exists (avoids 403 on project fetch when React state lags). */
   getOptionalAuthHeader: () => Promise<Record<string, string>>
   signInWithGoogle: () => Promise<void>
@@ -54,6 +67,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [userData, setUserData] = useState<UserData | null>(null)
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [loading, setLoading] = useState(true)
 
   // Ensure user doc exists and set up onSnapshot listener
@@ -78,8 +92,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           periodEnd: serverTimestamp(),
         },
         createdAt: serverTimestamp(),
+        currentWorkspaceId: null,
       }
       await setDoc(userRef, initial)
+      // Auto-create personal workspace
+      try {
+        const idToken = await firebaseUser.getIdToken()
+        const wsRes = await fetch('/api/workspaces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ name: `${firebaseUser.displayName || firebaseUser.email}'s Workspace`, slug: `personal-${firebaseUser.uid.slice(0, 8)}` })
+        })
+        if (wsRes.ok) {
+          const ws = await wsRes.json()
+          await updateDoc(userRef, { currentWorkspaceId: ws.id })
+        }
+      } catch (e) {
+        console.error('Failed to auto-create personal workspace', e)
+      }
     }
   }
 
@@ -140,7 +170,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               },
               tokensLimit,
               createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(),
+              currentWorkspaceId: data.currentWorkspaceId || null,
             })
+
+            // Fetch workspaces list
+            try {
+              const idToken = await firebaseUser.getIdToken()
+              const wsRes = await fetch('/api/workspaces', {
+                headers: { Authorization: `Bearer ${idToken}` }
+              })
+              if (wsRes.ok) {
+                const wsData = await wsRes.json()
+                setWorkspaces(Array.isArray(wsData) ? wsData : (wsData?.workspaces ?? []))
+              }
+            } catch (e) {
+              console.error('Failed to fetch workspaces', e)
+            }
           })
 
           // keep unsubscribe reference
@@ -150,6 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         setUserData(null)
+        setWorkspaces([])
       }
 
       setLoading(false)
@@ -251,12 +297,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const switchWorkspace = async (workspaceId: string) => {
+    if (!user) return
+    const userRef = doc(db, 'users', user.uid)
+    await updateDoc(userRef, { currentWorkspaceId: workspaceId })
+  }
+
+  const currentWorkspace = Array.isArray(workspaces) ? workspaces.find(w => w.id === userData?.currentWorkspaceId) || null : null
+
   return (
     <AuthContext.Provider
       value={{
         user,
         userData,
+        workspaces,
+        currentWorkspace,
         loading,
+        switchWorkspace,
         getOptionalAuthHeader,
         signInWithGoogle,
         signInWithGithub,

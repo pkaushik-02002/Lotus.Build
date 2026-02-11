@@ -118,6 +118,17 @@ function normalizeLogLine(line: string): string {
   return line.replace(/\s+/g, " ").trim().toLowerCase()
 }
 
+function isSandboxNotFoundError(error: unknown): boolean {
+  const err = error as { name?: string; message?: string; statusCode?: number } | undefined
+  const message = (err?.message || "").toLowerCase()
+  return (
+    err?.name === "NotFoundError" ||
+    err?.statusCode === 404 ||
+    message.includes("not found") ||
+    message.includes("paused sandbox")
+  )
+}
+
 function devLogShowsReady(log: string, port: number): boolean {
   if (!log || !log.trim()) return false
   const normalized = normalizeLogLine(log)
@@ -719,7 +730,12 @@ export async function POST(req: Request) {
                   await new Promise((r) => setTimeout(r, 500))
                   console.log(`[sandbox] Killed previous sandbox ${prevSandboxId}`)
                 } catch (e) {
-                  console.warn("[sandbox] Failed to kill previous sandbox:", e)
+                  if (isSandboxNotFoundError(e)) {
+                    // Previous sandbox was already deleted/expired; continue safely.
+                    console.log(`[sandbox] Previous sandbox already unavailable: ${prevSandboxId}`)
+                  } else {
+                    console.warn("[sandbox] Failed to kill previous sandbox:", e)
+                  }
                 }
               }
             } catch (e) {

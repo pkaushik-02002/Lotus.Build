@@ -57,8 +57,9 @@ import {
   Key
 } from "lucide-react"
 import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
-import { ThinkingBar } from "@/components/prompt-kit/thinking-bar"
-import { Reasoning, ReasoningContent, ReasoningTrigger, AgentTimeline } from "@/components/prompt-kit/reasoning"
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/prompt-kit/reasoning"
+import { Steps, StepsContent, StepsItem, StepsTrigger } from "@/components/prompt-kit/steps"
+import { Tool } from "@/components/prompt-kit/tool"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
@@ -78,7 +79,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { applyPatch } from "diff"
 import type { GeneratedFile, Message, Project, ProjectVisibility } from "./types"
 import { extractAgentMessage } from "./utils"
-import { ProjectErrorBoundary, ChatMessage, CodePanel, PreviewWithVisualEdit } from "@/components/project"
+import { ProjectErrorBoundary, ChatMessage, CodePanel, ResponsivePreview, BrowserNavigator } from "@/components/project"
 
 // Persists across Strict Mode remounts so only one sandbox run can update logs
 let sandboxRunIdCounter = 0
@@ -89,7 +90,7 @@ function ProjectContent() {
   const params = useParams()
   const projectId = params?.id as string
 
-  const { user, userData, hasTokens, remainingTokens, updateTokensUsed, getOptionalAuthHeader, loading: authLoading } = useAuth()
+  const { user, userData, hasTokens, remainingTokens, updateTokensUsed, getOptionalAuthHeader, workspaces, switchWorkspace, loading: authLoading } = useAuth()
 
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
@@ -100,7 +101,7 @@ function ProjectContent() {
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null)
   const [previewKey, setPreviewKey] = useState(0)
   const [previewPath, setPreviewPath] = useState("/")
-  const [previewPathDraft, setPreviewPathDraft] = useState("/")
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "tablet" | "phone">("desktop")
   const [previewReloadNonce, setPreviewReloadNonce] = useState(0)
   const [copied, setCopied] = useState(false)
   const [isPreviewReady, setIsPreviewReady] = useState(false)
@@ -173,6 +174,9 @@ function ProjectContent() {
   const [shareSaving, setShareSaving] = useState(false)
   const [accessError, setAccessError] = useState<"private" | "forbidden" | null>(null)
   const [tokenLimitModalOpen, setTokenLimitModalOpen] = useState(false)
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
+  const [newWorkspaceName, setNewWorkspaceName] = useState("")
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false)
   const isLg = useIsLg()
   const lastAutoPreviewSignatureRef = useRef<string | null>(null)
   /** Prevents double generation when status is "pending" (e.g. Strict Mode remount resets isGenerating) */
@@ -202,6 +206,17 @@ function ProjectContent() {
       setIsTimelineCollapsed(true)
     }
   }, [project?.sandboxUrl, allBuildSuccess])
+
+  const runSteps = reasoningSteps.length > 0
+    ? reasoningSteps
+    : [
+        "Analyzing your request and understanding scope.",
+        "Planning updates across relevant components.",
+        "Applying changes and validating output.",
+        "Finalizing and preparing preview.",
+      ]
+
+  const reasoningText = runSteps.map((step, i) => `${i + 1}. ${step}`).join("\n")
 
   const getAuthHeader = useCallback(async () => {
     if (!user) throw new Error("Not authenticated")
@@ -394,6 +409,33 @@ function ProjectContent() {
       alert("Failed to update share settings")
     } finally {
       setShareSaving(false)
+    }
+  }
+
+  const handleCreateWorkspace = async () => {
+    if (!user || !newWorkspaceName.trim()) return
+    setCreatingWorkspace(true)
+    try {
+      const authHeader = await getAuthHeader()
+      const res = await fetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader },
+        body: JSON.stringify({
+          name: newWorkspaceName.trim(),
+          slug: `workspace-${Date.now()}`
+        })
+      })
+      if (!res.ok) throw new Error('Failed to create workspace')
+      const data = await res.json()
+      const workspaceId = data.workspaceId || data.id
+      setCreateWorkspaceOpen(false)
+      setNewWorkspaceName("")
+      await switchWorkspace(workspaceId)
+    } catch (e) {
+      console.error('Create workspace failed', e)
+      alert('Failed to create workspace')
+    } finally {
+      setCreatingWorkspace(false)
     }
   }
 
@@ -838,7 +880,6 @@ function ProjectContent() {
   const handlePreviewNavigate = useCallback((nextPath: string) => {
     const normalized = nextPath.startsWith("/") ? nextPath : `/${nextPath}`
     setPreviewPath(normalized)
-    setPreviewPathDraft(normalized)
   }, [])
 
   const handlePreviewReload = useCallback(() => {
@@ -1616,6 +1657,40 @@ function ProjectContent() {
     const fullPrompt = `Original request: ${project.prompt}\n\nUser wants these modifications: ${userMessage}`
     await generateCode(fullPrompt, project.model)
   }
+
+  const handleManualVisualSave = useCallback(async (payload: {
+    id: string
+    description: string | null
+    initial: { content?: string; styles?: Record<string, string> }
+    current: { content?: string; styles?: Record<string, string> }
+  }) => {
+    if (!project || !canEdit || isGenerating) return
+
+    const prompt = [
+      "Apply the following manual visual edit to the project source code so it persists in the app (not runtime-only DOM).",
+      "Target the component/page that renders the selected element and keep unrelated code unchanged.",
+      "",
+      `Selected element: ${payload.description || payload.id}`,
+      "",
+      "Original selected snapshot (before edit):",
+      "```json",
+      JSON.stringify(payload.initial, null, 2),
+      "```",
+      "",
+      "Edited target snapshot (after edit):",
+      "```json",
+      JSON.stringify(payload.current, null, 2),
+      "```",
+      "",
+      "Requirements:",
+      "- Persist content and style updates in source files.",
+      "- If styles are from utility classes, update classes/CSS appropriately rather than using brittle runtime hacks.",
+      "- Preserve existing design system and theme.",
+      "- Return only changed files.",
+    ].join("\n")
+
+    await handleSendMessage(prompt)
+  }, [project, canEdit, isGenerating, handleSendMessage])
 
 
   const copyCode = async () => {
@@ -3180,6 +3255,40 @@ function ProjectContent() {
           </DialogContent>
         </Dialog>
 
+        {/* Create Workspace dialog */}
+        <Dialog open={createWorkspaceOpen} onOpenChange={(open) => { setCreateWorkspaceOpen(open); if (!open) setNewWorkspaceName("") }}>
+          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),24rem)] sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-zinc-100">Create Workspace</DialogTitle>
+              <DialogDescription className="text-zinc-400 text-sm">
+                Give your workspace a name to get started.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 space-y-4">
+              <Input
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
+                placeholder="My Workspace"
+                className="bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+                onKeyDown={(e) => { if (e.key === "Enter" && newWorkspaceName.trim()) handleCreateWorkspace() }}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800" onClick={() => { setCreateWorkspaceOpen(false); setNewWorkspaceName("") }}>
+                  Cancel
+                </Button>
+                <Button
+                  className="bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-medium"
+                  onClick={handleCreateWorkspace}
+                  disabled={!newWorkspaceName.trim() || creatingWorkspace}
+                >
+                  {creatingWorkspace ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* Share dialog - visibility (public / private / link-only) + copy link */}
         <Dialog open={shareOpen} onOpenChange={(open) => { setShareOpen(open) }}>
           <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),24rem)] sm:max-w-md">
@@ -3343,8 +3452,19 @@ function ProjectContent() {
           {/* Mobile content - prevent overflow */}
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {mobileTab === "chat" ? (
-              <div className="h-full flex flex-col bg-zinc-900/30 min-h-0">
-                <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-5 space-y-4 chat-scrollbar overscroll-contain">
+              <div className="h-full min-h-0 overflow-hidden rounded-b-2xl border border-zinc-800/70 bg-gradient-to-b from-zinc-900/45 to-zinc-950/35">
+                <div className="border-b border-zinc-800/70 px-4 py-3 backdrop-blur-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 animate-pulse rounded-full bg-zinc-400" />
+                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-400">Agent Session</p>
+                    </div>
+                    <div className="rounded-full border border-zinc-700/70 bg-zinc-800/60 px-2 py-1 text-[10px] text-zinc-400">
+                      Live timeline
+                    </div>
+                  </div>
+                </div>
+                <div className="chat-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 sm:p-5 space-y-4 overscroll-contain">
                   <ChatMessage
                     message={{ role: "user", content: project.prompt }}
                     isLast={false}
@@ -3373,40 +3493,38 @@ function ProjectContent() {
                   ))}
 
                   {isGenerating && (
-                    <div className="flex flex-col gap-2">
-                      <ThinkingBar
-                        text={agentStatus || "Thinking..."}
-                        stopLabel="Skip thinking"
-                        onStop={() => abortControllerRef.current?.abort()}
-                        onClick={undefined}
-                      />
-                      <AgentTimeline
-                        steps={reasoningSteps.map((step, i) => {
-                          // Determine step type based on content
-                          let type: "thinking" | "tool_call" | "code" | "search" | "result" = "thinking"
-                          const lowerStep = step.toLowerCase()
-                          
-                          if (lowerStep.includes("search") || lowerStep.includes("looking") || lowerStep.includes("finding")) {
-                            type = "search"
-                          } else if (lowerStep.includes("generat") || lowerStep.includes("writ") || lowerStep.includes("creat")) {
-                            type = "code"
-                          } else if (lowerStep.includes("final") || lowerStep.includes("complet") || lowerStep.includes("preview")) {
-                            type = "result"
-                          } else if (lowerStep.includes("analyz") || lowerStep.includes("plan") || lowerStep.includes("understand")) {
-                            type = "thinking"
-                          } else if (i > 0 && i < reasoningSteps.length - 1) {
-                            type = "tool_call"
-                          }
-
-                          return {
-                            id: `step-${i}`,
-                            type,
-                            title: step,
-                            status: i === reasoningSteps.length - 1 ? "running" : "completed",
-                            expanded: false,
-                          }
-                        })}
-                        isStreaming={true}
+                    <div className="space-y-3 rounded-2xl border border-zinc-800/70 bg-zinc-900/60 p-3 sm:p-4">
+                      <TextShimmer className="text-sm text-zinc-300">
+                        {agentStatus || "Working on your update"}
+                      </TextShimmer>
+                      <Steps defaultOpen>
+                        <StepsTrigger>Agent run: Update your project</StepsTrigger>
+                        <StepsContent>
+                          <div className="space-y-1.5">
+                            {runSteps.map((step, i) => (
+                              <StepsItem
+                                key={`${step}-${i}`}
+                                className={i === runSteps.length - 1 ? "text-zinc-200" : undefined}
+                              >
+                                {step}
+                              </StepsItem>
+                            ))}
+                          </div>
+                        </StepsContent>
+                      </Steps>
+                      <Reasoning isStreaming={true}>
+                        <ReasoningTrigger>Show reasoning</ReasoningTrigger>
+                        <ReasoningContent className="ml-2 border-l-2 border-l-zinc-700 px-2 pb-1 text-zinc-400">
+                          {reasoningText}
+                        </ReasoningContent>
+                      </Reasoning>
+                      <Tool
+                        className="w-full"
+                        toolPart={{
+                          type: "code_generation",
+                          state: "processing",
+                          input: { task: agentStatus || "Applying requested updates", steps: runSteps.length },
+                        }}
                       />
                     </div>
                   )}
@@ -3441,7 +3559,7 @@ function ProjectContent() {
                 </div>
 
                 {canEdit ? (
-                <div className="p-3 sm:p-4 border-t border-zinc-800/50 bg-zinc-950/40 backdrop-blur-sm flex-shrink-0 safe-area-inset-bottom">
+                <div className="safe-area-inset-bottom border-t border-zinc-800/50 bg-zinc-950/40 p-3 sm:p-4 backdrop-blur-sm">
                   <AnimatedAIInput
                     mode="chat"
                     compact
@@ -3510,6 +3628,15 @@ function ProjectContent() {
                   )}
                   {project.sandboxUrl ? (
                     <div className="relative flex flex-col flex-1 min-h-0">
+                      <BrowserNavigator
+                        currentPath={previewPath}
+                        onNavigate={handlePreviewNavigate}
+                        onRefresh={handlePreviewReload}
+                        isLoading={isSandboxLoading || isGenerating}
+                        selectedDevice={previewDevice}
+                        onDeviceChange={setPreviewDevice}
+                        className="flex-shrink-0"
+                      />
                       {(previewRefreshHint || canEdit) && (
                         <div className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-zinc-900/50 border-b border-zinc-800/50 text-zinc-400 text-xs">
                           {previewRefreshHint ? <span>{previewRefreshHint}</span> : <span>Not loading? Restart preview below.</span>}
@@ -3538,10 +3665,15 @@ function ProjectContent() {
                           </div>
                         </div>
                       )}
-                      <PreviewWithVisualEdit
+                      <ResponsivePreview
                         src={getPreviewUrl() || project.sandboxUrl}
                         canEdit={canEdit}
                         enabled={visualEditActive}
+                        onSaveManualEdit={handleManualVisualSave}
+                        isSavingManualEdit={isGenerating}
+                        onIframeNavigate={handlePreviewNavigate}
+                        selectedDevice={previewDevice}
+                        onDeviceChange={setPreviewDevice}
                         onEditWithAI={(description, userRequest) => {
                           setMobileTab("chat")
                           const prompt = userRequest
@@ -3635,7 +3767,18 @@ function ProjectContent() {
         <ResizablePanelGroup direction="horizontal" className="h-full flex-1 min-h-0 w-full min-w-0">
           {/* Chat Panel - modern glass */}
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-            <div className="h-full flex flex-col bg-zinc-900/30 backdrop-blur-sm border-r border-zinc-800/50">
+            <div className="h-full flex flex-col border-r border-zinc-800/50 bg-gradient-to-b from-zinc-900/45 to-zinc-950/35 backdrop-blur-sm">
+              <div className="border-b border-zinc-800/70 px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 w-2 animate-pulse rounded-full bg-zinc-400" />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">Agent Session</span>
+                  </div>
+                  <span className="rounded-full border border-zinc-700/70 bg-zinc-800/60 px-2 py-1 text-[10px] text-zinc-400">
+                    Live timeline
+                  </span>
+                </div>
+              </div>
               {/* Messages */}
               <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 chat-scrollbar">
                 {/* Initial prompt */}
@@ -3669,37 +3812,39 @@ function ProjectContent() {
 
                 {/* Thinking bar + reasoning (agent-like) */}
                 {isGenerating && (
-                  <div className="flex flex-col gap-2">
-                    <ThinkingBar
-                      text={agentStatus || "Thinking..."}
-                      stopLabel="Skip thinking"
-                      onStop={() => abortControllerRef.current?.abort()}
-                      onClick={undefined}
-                    />
+                  <div className="space-y-3 rounded-2xl border border-zinc-800/70 bg-zinc-900/60 p-4">
+                    <TextShimmer className="text-sm text-zinc-300">
+                      {agentStatus || "Working on your update"}
+                    </TextShimmer>
+                    <Steps defaultOpen>
+                      <StepsTrigger>Agent run: Update your project</StepsTrigger>
+                      <StepsContent>
+                        <div className="space-y-1.5">
+                          {runSteps.map((step, i) => (
+                            <StepsItem
+                              key={`${step}-${i}`}
+                              className={i === runSteps.length - 1 ? "text-zinc-200" : undefined}
+                            >
+                              {step}
+                            </StepsItem>
+                          ))}
+                        </div>
+                      </StepsContent>
+                    </Steps>
                     <Reasoning isStreaming={true}>
                       <ReasoningTrigger>Show reasoning</ReasoningTrigger>
-                      <ReasoningContent className="ml-2 border-l-2 border-l-zinc-200 px-2 pb-1 dark:border-l-zinc-700">
-                        <div className="space-y-1">
-                          {reasoningSteps.length > 0
-                            ? reasoningSteps.map((step, i) => (
-                                <div key={i} className="text-zinc-400">
-                                  {i === reasoningSteps.length - 1 ? (
-                                    <TextShimmer duration={1.5}>
-                                      {i + 1}. {step}
-                                    </TextShimmer>
-                                  ) : (
-                                    <>{i + 1}. {step}</>
-                                  )}
-                                </div>
-                              ))
-                            : (
-                              <TextShimmer duration={1.5}>
-                                Reasoning in progress...
-                              </TextShimmer>
-                            )}
-                        </div>
+                      <ReasoningContent className="ml-2 border-l-2 border-l-zinc-700 px-2 pb-1 text-zinc-400">
+                        {reasoningText}
                       </ReasoningContent>
                     </Reasoning>
+                    <Tool
+                      className="w-full"
+                      toolPart={{
+                        type: "code_generation",
+                        state: "processing",
+                        input: { task: agentStatus || "Applying requested updates", steps: runSteps.length },
+                      }}
+                    />
                   </div>
                 )}
 
@@ -3796,94 +3941,7 @@ function ProjectContent() {
                     </button>
                   </div>
 
-                  {activeTab === "preview" && (
-                    <div className="hidden md:flex items-center gap-2 min-w-0">
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
-                          disabled
-                        >
-                          <ArrowLeft className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
-                          disabled
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
-                          onClick={handlePreviewReload}
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </Button>
-                      </div>
-
-                      <div className="flex items-center gap-2 min-w-0 rounded-xl bg-zinc-900/50 border border-zinc-800 px-3 py-1.5">
-                        <div className={cn(
-                          "w-2 h-2 rounded-full",
-                          project.sandboxUrl ? "bg-zinc-500" : "bg-zinc-600"
-                        )} />
-
-                        {/* v0-like path bar */}
-                        <div className="flex items-center gap-1 min-w-0">
-                          <button
-                            type="button"
-                            onClick={() => handlePreviewNavigate("/")}
-                            className="text-xs text-zinc-300 hover:text-zinc-100 transition-colors font-mono"
-                            disabled={!project.sandboxUrl}
-                          >
-                          </button>
-                          {previewPath
-                            .split("/")
-                            .filter(Boolean)
-                            .map((seg, idx, arr) => {
-                              const to = "/" + arr.slice(0, idx + 1).join("/")
-                              return (
-                                <div key={`${seg}-${idx}`} className="flex items-center gap-1 min-w-0">
-                                  <ChevronRight className="w-3 h-3 text-zinc-600 shrink-0" />
-                                  <button
-                                    type="button"
-                                    onClick={() => handlePreviewNavigate(to)}
-                                    className="text-xs text-zinc-300 hover:text-zinc-100 transition-colors font-mono truncate max-w-[120px]"
-                                    title={to}
-                                    disabled={!project.sandboxUrl}
-                                  >
-                                    {seg}
-                                  </button>
-                                </div>
-                              )
-                            })}
-                        </div>
-
-                        <div className="w-px h-4 bg-zinc-800 mx-1 shrink-0" />
-                        <form
-                          className="min-w-0 flex-1"
-                          onSubmit={(e) => {
-                            e.preventDefault()
-                            handlePreviewNavigate(previewPathDraft || "/")
-                          }}
-                        >
-                          <input
-                            value={previewPathDraft}
-                            onChange={(e) => setPreviewPathDraft(e.target.value)}
-                            disabled={!project.sandboxUrl}
-                            className="w-full bg-transparent text-xs text-zinc-400 placeholder:text-zinc-600 outline-none font-mono"
-                            placeholder="/"
-                          />
-                        </form>
-                      </div>
-                    </div>
-                  )}
+                  {activeTab === "preview" && <div className="hidden md:flex items-center gap-2 min-w-0" />}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -3963,6 +4021,15 @@ function ProjectContent() {
                       )}
                       {project.sandboxUrl ? (
                         <div className="relative flex flex-col flex-1 min-h-0">
+                          <BrowserNavigator
+                            currentPath={previewPath}
+                            onNavigate={handlePreviewNavigate}
+                            onRefresh={handlePreviewReload}
+                            isLoading={isSandboxLoading || isGenerating}
+                            selectedDevice={previewDevice}
+                            onDeviceChange={setPreviewDevice}
+                            className="flex-shrink-0"
+                          />
                           {(previewRefreshHint || canEdit) && (
                             <div className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-zinc-900/50 border-b border-zinc-800/50 text-zinc-400 text-xs">
                               {previewRefreshHint ? <span>{previewRefreshHint}</span> : <span>Seeing &quot;Closed Port&quot; or connection refused? Click Refresh or restart preview below.</span>}
@@ -3991,10 +4058,15 @@ function ProjectContent() {
                               </div>
                             </div>
                           )}
-                          <PreviewWithVisualEdit
+                          <ResponsivePreview
                             src={getPreviewUrl() || project.sandboxUrl}
                             canEdit={canEdit}
                             enabled={visualEditActive}
+                            onSaveManualEdit={handleManualVisualSave}
+                            isSavingManualEdit={isGenerating}
+                            onIframeNavigate={handlePreviewNavigate}
+                            selectedDevice={previewDevice}
+                            onDeviceChange={setPreviewDevice}
                             onEditWithAI={(description, userRequest) => {
                               const prompt = userRequest
                                 ? `Edit the selected element in the preview: ${description}. User request: ${userRequest}`

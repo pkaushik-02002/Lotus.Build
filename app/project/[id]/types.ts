@@ -20,6 +20,7 @@ export interface Project {
   prompt: string
   model?: string
   status: "pending" | "generating" | "complete" | "error"
+  workspaceId?: string
   files?: GeneratedFile[]
   sandboxUrl?: string
   sandboxId?: string

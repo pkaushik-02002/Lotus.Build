@@ -1,11 +1,16 @@
 "use client"
 
 import React, { useRef, useState, useEffect, useCallback } from "react"
-import { Sparkles } from "lucide-react"
+import { ArrowUp, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { VisualEditDesignPanel, type DesignSnapshot } from "./visual-edit-design-panel"
+import {
+  PromptInput,
+  PromptInputAction,
+  PromptInputActions,
+  PromptInputTextarea,
+} from "@/components/prompt-kit/prompt-input"
 
 type Rect = { x: number; y: number; width: number; height: number }
 type Viewport = { w: number; h: number }
@@ -16,6 +21,14 @@ export interface PreviewWithVisualEditProps {
   /** When false, hover/select overlays and "Edit with AI" are disabled (visual edit off). Default false so it only activates when user turns it on. */
   enabled?: boolean
   onEditWithAI: (description: string, userRequest: string) => void
+  onSaveManualEdit?: (payload: {
+    id: string
+    description: string | null
+    initial: DesignSnapshot
+    current: DesignSnapshot
+  }) => Promise<void> | void
+  isSavingManualEdit?: boolean
+  onIframeNavigate?: (path: string) => void
   className?: string
   iframeKey?: string | number
 }
@@ -25,6 +38,9 @@ export function PreviewWithVisualEdit({
   canEdit = true,
   enabled = false,
   onEditWithAI,
+  onSaveManualEdit,
+  isSavingManualEdit = false,
+  onIframeNavigate,
   className,
   iframeKey,
 }: PreviewWithVisualEditProps) {
@@ -39,6 +55,8 @@ export function PreviewWithVisualEdit({
     snapshot: DesignSnapshot
   } | null>(null)
   const [editInput, setEditInput] = useState("")
+  const [draft, setDraft] = useState<DesignSnapshot | null>(null)
+  const [isSavingLocal, setIsSavingLocal] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const updateSize = useCallback(() => {
@@ -64,8 +82,21 @@ export function PreviewWithVisualEdit({
     if (!enabled) {
       setHover(null)
       setSelect(null)
+      setDraft(null)
     }
   }, [enabled])
+
+  // Listen for navigation events from the iframe
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const d = e.data
+      if (d && typeof d === "object" && d.type === "preview-navigate" && typeof d.path === "string") {
+        onIframeNavigate?.(d.path)
+      }
+    }
+    window.addEventListener("message", handler)
+    return () => window.removeEventListener("message", handler)
+  }, [onIframeNavigate])
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -101,6 +132,14 @@ export function PreviewWithVisualEdit({
                 viewport: d.viewport,
                 description: d.description ?? null,
                 snapshot: { content, styles },
+              }
+            : null
+        )
+        setDraft(
+          d.rect && d.viewport && d.id
+            ? {
+                content,
+                styles,
               }
             : null
         )
@@ -148,12 +187,105 @@ export function PreviewWithVisualEdit({
     const desc = select.description || "selected element"
     onEditWithAI(desc, editInput.trim())
     setSelect(null)
+    setDraft(null)
     setEditInput("")
   }
+
+  const isSameSnapshot = useCallback((a: DesignSnapshot | null, b: DesignSnapshot | null) => {
+    if (!a || !b) return false
+    const normalizeStyles = (styles?: Record<string, string>) => {
+      const out: Record<string, string> = {}
+      if (!styles) return out
+      for (const [k, v] of Object.entries(styles)) {
+        if (typeof v === "string" && v.trim() !== "") out[k] = v
+      }
+      return out
+    }
+    return (
+      (a.content ?? "") === (b.content ?? "") &&
+      JSON.stringify(normalizeStyles(a.styles)) === JSON.stringify(normalizeStyles(b.styles))
+    )
+  }, [])
+
+  const handleSaveManual = useCallback(async () => {
+    if (!select || !draft || !onSaveManualEdit || isSavingLocal || isSavingManualEdit) return
+    setIsSavingLocal(true)
+    try {
+      await onSaveManualEdit({
+        id: select.id,
+        description: select.description,
+        initial: select.snapshot,
+        current: draft,
+      })
+      setSelect(null)
+      setDraft(null)
+      setEditInput("")
+    } finally {
+      setIsSavingLocal(false)
+    }
+  }, [draft, isSavingLocal, isSavingManualEdit, onSaveManualEdit, select])
+
+  const handleIframeLoad = useCallback(() => {
+    if (!iframeRef.current?.contentWindow) return
+    try {
+      // Inject a script to track navigation and post messages to parent
+      const doc = iframeRef.current.contentDocument
+      if (!doc) return
+      
+      const script = doc.createElement("script")
+      script.textContent = `
+        (function() {
+          let currentPath = window.location.pathname + window.location.search + window.location.hash;
+          
+          // Track history changes
+          const originalPushState = window.history.pushState;
+          const originalReplaceState = window.history.replaceState;
+          
+          window.history.pushState = function(...args) {
+            originalPushState.apply(this, args);
+            const newPath = window.location.pathname + window.location.search + window.location.hash;
+            if (newPath !== currentPath) {
+              currentPath = newPath;
+              window.parent.postMessage({ type: 'preview-navigate', path: newPath }, '*');
+            }
+          };
+          
+          window.history.replaceState = function(...args) {
+            originalReplaceState.apply(this, args);
+            const newPath = window.location.pathname + window.location.search + window.location.hash;
+            if (newPath !== currentPath) {
+              currentPath = newPath;
+              window.parent.postMessage({ type: 'preview-navigate', path: newPath }, '*');
+            }
+          };
+          
+          // Listen for popstate (back/forward buttons)
+          window.addEventListener('popstate', () => {
+            const newPath = window.location.pathname + window.location.search + window.location.hash;
+            if (newPath !== currentPath) {
+              currentPath = newPath;
+              window.parent.postMessage({ type: 'preview-navigate', path: newPath }, '*');
+            }
+          });
+        })();
+      `
+      doc.head.appendChild(script)
+    } catch (e) {
+      // Cross-origin iframe, script injection not allowed
+      // Navigation tracking will not work for cross-origin sandboxes
+    }
+  }, [])
 
   const sendDesignToPreview = useCallback(
     (payload: { content?: string; styles?: Record<string, string> }) => {
       if (!select || !iframeRef.current?.contentWindow) return
+      setDraft((prev) => {
+        const base = prev ?? select.snapshot
+        return {
+          content: payload.content !== undefined ? payload.content : base.content,
+          styles: payload.styles !== undefined ? payload.styles : base.styles,
+        }
+      })
       iframeRef.current.contentWindow.postMessage(
         { type: "bstudio-apply-design", id: select.id, payload },
         "*"
@@ -174,6 +306,7 @@ export function PreviewWithVisualEdit({
           className="w-full h-full min-h-0 border-0 absolute inset-0"
           title="Preview"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          onLoad={handleIframeLoad}
         />
         {/* Hover highlight — only when visual edit is enabled */}
         {canEdit && enabled && hover && (
@@ -199,25 +332,63 @@ export function PreviewWithVisualEdit({
             description={select.description}
             snapshot={select.snapshot}
             onApply={sendDesignToPreview}
-            onClose={() => setSelect(null)}
+            onClose={() => {
+              setSelect(null)
+              setDraft(null)
+            }}
           />
-          <div className="flex items-center gap-2 p-2 border-t border-zinc-800 bg-zinc-900 shrink-0">
-            <Input
-              placeholder="Or ask AI to change..."
+          <div className="p-2 border-t border-zinc-800 bg-zinc-900 shrink-0">
+            <PromptInput
               value={editInput}
-              onChange={(e) => setEditInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleEditSubmit()
-              }}
-              className="h-8 text-xs bg-zinc-800 border-zinc-700 flex-1"
-            />
-            <Button
-              size="sm"
-              className="h-8 text-xs bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 border-amber-500/50 shrink-0"
-              onClick={handleEditSubmit}
+              onValueChange={setEditInput}
+              isLoading={isSavingManualEdit}
+              onSubmit={handleEditSubmit}
+              className="w-full border-zinc-800/70 bg-zinc-900/90 p-2"
             >
-              <Sparkles className="w-3.5 h-3.5" />
-            </Button>
+              <div className="relative">
+                <PromptInputTextarea
+                  placeholder="Ask AI to change this selected element..."
+                  className="min-h-[56px] border-zinc-800/60 px-2.5 py-2 pr-12 text-xs"
+                />
+                <PromptInputAction
+                  tooltip={isSavingManualEdit ? "Working..." : "Send AI edit request"}
+                  className="absolute bottom-2 right-2"
+                >
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="icon"
+                    className="h-7 w-7 rounded-full bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
+                    onClick={handleEditSubmit}
+                    disabled={isSavingManualEdit}
+                  >
+                    {isSavingManualEdit ? (
+                      <Square className="size-3.5 fill-current" />
+                    ) : (
+                      <ArrowUp className="size-3.5" />
+                    )}
+                  </Button>
+                </PromptInputAction>
+              </div>
+              <PromptInputActions className="justify-start pt-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                  disabled={
+                    !onSaveManualEdit ||
+                    !draft ||
+                    isSavingLocal ||
+                    isSavingManualEdit ||
+                    isSameSnapshot(select.snapshot, draft)
+                  }
+                  onClick={handleSaveManual}
+                >
+                  {isSavingLocal || isSavingManualEdit ? "Saving..." : "Save changes"}
+                </Button>
+              </PromptInputActions>
+            </PromptInput>
           </div>
         </div>
       )}

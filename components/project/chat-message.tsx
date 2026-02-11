@@ -61,18 +61,18 @@ export function ChatMessage({
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={cn("flex gap-3 group", isUser ? "flex-row-reverse" : "")}
+      className={cn("group flex gap-3.5", isUser ? "flex-row-reverse" : "")}
     >
       <div
         className={cn(
-          "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
-          isUser ? "bg-zinc-700" : ""
+          "h-10 w-10 shrink-0 rounded-xl border border-zinc-700/60 bg-zinc-900/80 flex items-center justify-center",
+          isUser ? "bg-zinc-800" : ""
         )}
       >
         {isUser ? (
           <User className="w-5 h-5 text-zinc-300" />
         ) : (
-          <div className="w-10 h-10 rounded-full bg-zinc-800 border border-zinc-700/50 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-xl border border-zinc-700/50 bg-zinc-800 flex items-center justify-center">
             <Bot className="w-5 h-5 text-zinc-300" />
           </div>
         )}
@@ -81,7 +81,7 @@ export function ChatMessage({
         {isUser && (
           <div className="inline-block max-w-[85%] sm:max-w-[75%] ml-auto group">
             {isEditing ? (
-              <div className="bg-zinc-700 rounded-2xl rounded-tr-sm p-2.5 sm:p-3">
+              <div className="rounded-2xl rounded-tr-sm border border-zinc-700/70 bg-zinc-800 p-2.5 sm:p-3">
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
@@ -109,7 +109,7 @@ export function ChatMessage({
               </div>
             ) : (
               <div>
-                <div className="rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 bg-zinc-700 text-zinc-100 rounded-tr-sm">
+                <div className="rounded-2xl rounded-tr-sm border border-zinc-700/70 bg-zinc-800 px-3 py-2 sm:px-4 sm:py-2.5 text-zinc-100 shadow-[0_8px_20px_-12px_rgba(0,0,0,0.9)]">
                   <p className="text-xs sm:text-sm whitespace-pre-wrap">{message.content}</p>
                 </div>
                 {(onEdit || message.content) && (
@@ -154,7 +154,7 @@ export function ChatMessage({
         )}
 
         {!isUser && message.content && (
-          <div className="bg-zinc-800/50 rounded-2xl rounded-tl-sm border border-zinc-700/50 p-3 sm:p-4 mb-3">
+          <div className="mb-3 rounded-2xl rounded-tl-sm border border-zinc-700/60 bg-zinc-900/65 p-3 shadow-[0_16px_30px_-20px_rgba(0,0,0,0.95)] sm:p-4">
             {(message as Message & { timestamp?: string }).timestamp && (
               <p className="text-[11px] sm:text-xs text-zinc-500 mb-2">
                 {formatMessageTime((message as Message & { timestamp?: string }).timestamp!)}

@@ -7,10 +7,9 @@ const metrics = [
 
 export function ImpactSection() {
   return (
-    <section className="px-6 py-24 bg-zinc-900/20">
-      <div className="max-w-5xl mx-auto">
-        {/* Impact Section Header */}
-        <div className="text-center mb-12">
+    <section id="features" className="px-4 py-20 sm:px-6 sm:py-24">
+      <div className="mx-auto max-w-6xl rounded-[2rem] border border-zinc-800/70 bg-zinc-900/30 px-5 py-10 sm:px-8 sm:py-12 lg:px-12">
+        <div className="mb-12 text-center">
           <p className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-4">By the numbers</p>
           <h2 className="font-display text-3xl md:text-4xl font-bold text-zinc-100 mb-4">Powering the next generation</h2>
           <p className="text-zinc-500 max-w-lg mx-auto text-balance">
@@ -18,14 +17,12 @@ export function ImpactSection() {
           </p>
         </div>
 
-        {/* Metrics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {metrics.map((metric) => (
             <div
               key={metric.label}
-              className="p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 hover:border-zinc-700/50 hover:bg-zinc-900/80 transition-all duration-300 group text-center relative overflow-hidden"
+              className="group relative overflow-hidden rounded-2xl border border-zinc-800/60 bg-zinc-900/50 p-6 text-center transition-all duration-300 hover:-translate-y-0.5 hover:border-zinc-700/70 hover:bg-zinc-900/80"
             >
-              {/* Subtle gradient on hover */}
               <div className="absolute inset-0 bg-gradient-to-t from-zinc-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
               <div className="relative">
                 <p className="font-display text-3xl md:text-4xl font-bold text-zinc-100 mb-1 group-hover:text-white transition-colors">
