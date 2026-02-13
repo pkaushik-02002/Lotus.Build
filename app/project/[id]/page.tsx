@@ -57,9 +57,7 @@ import {
   Key
 } from "lucide-react"
 import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/prompt-kit/reasoning"
-import { Steps, StepsContent, StepsItem, StepsTrigger } from "@/components/prompt-kit/steps"
-import { Tool } from "@/components/prompt-kit/tool"
+import { ThinkingBar } from "@/components/prompt-kit"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
@@ -215,8 +213,6 @@ function ProjectContent() {
         "Applying changes and validating output.",
         "Finalizing and preparing preview.",
       ]
-
-  const reasoningText = runSteps.map((step, i) => `${i + 1}. ${step}`).join("\n")
 
   const getAuthHeader = useCallback(async () => {
     if (!user) throw new Error("Not authenticated")
@@ -1068,9 +1064,18 @@ function ProjectContent() {
 
     for (const block of blocks) {
       const path = block.path
-      let content = block.content.trim()
+      // Do not trim blindly: trimming can break unified diff hunk line counts.
+      const rawContent = block.content
+      let content = rawContent
+      // Strip markdown code fences if the model wrapped output in ```diff ... ```
+      if (content.includes("```")) {
+        content = content
+          .replace(/^```(?:diff|patch)?\s*/i, "")
+          .replace(/\s*```$/, "")
+      }
       // Detect unified diff: full format (--- a/...) or hunk-only (contains @@ and -/+ lines) that got pasted by mistake
-      const hasDiffHeader = content.startsWith("--- a/") || content.startsWith("--- a\\")
+      const normalizedStart = content.trimStart()
+      const hasDiffHeader = normalizedStart.startsWith("--- a/") || normalizedStart.startsWith("--- a\\")
       const hasDiffSyntax = content.includes("@@") && /^\s*[-+]/m.test(content)
       const isHunkOnly = hasDiffSyntax && !hasDiffHeader
       const isUnifiedDiff = hasDiffHeader || isHunkOnly
@@ -1082,13 +1087,18 @@ function ProjectContent() {
         }
         const existingIndex = result.findIndex(f => f.path === path)
         const oldContent = existingIndex !== -1 ? result[existingIndex].content : ""
-        const patched = applyPatch(oldContent, content)
-        if (typeof patched === "string") {
-          if (existingIndex !== -1) {
-            result[existingIndex] = { ...result[existingIndex], content: patched }
-          } else {
-            result.push({ path, content: patched })
+        try {
+          const patched = applyPatch(oldContent, content)
+          if (typeof patched === "string") {
+            if (existingIndex !== -1) {
+              result[existingIndex] = { ...result[existingIndex], content: patched }
+            } else {
+              result.push({ path, content: patched })
+            }
           }
+        } catch (err) {
+          // Malformed/partial diff from model: keep existing file unchanged.
+          console.warn("Patch apply failed for file:", path, err)
         }
         // If applyPatch returns false, patch failed; leave existing file unchanged or skip new
       } else {
@@ -1098,11 +1108,12 @@ function ProjectContent() {
           // Don't overwrite with diff text; keep existing file
           continue
         }
+        const fileContent = content.trim()
         const existingIndex = result.findIndex(f => f.path === path)
         if (existingIndex !== -1) {
-          result[existingIndex] = { ...result[existingIndex], content }
+          result[existingIndex] = { ...result[existingIndex], content: fileContent }
         } else {
-          result.push({ path, content })
+          result.push({ path, content: fileContent })
         }
       }
     }
@@ -3493,38 +3504,12 @@ function ProjectContent() {
                   ))}
 
                   {isGenerating && (
-                    <div className="space-y-3 rounded-2xl border border-zinc-800/70 bg-zinc-900/60 p-3 sm:p-4">
-                      <TextShimmer className="text-sm">
-                        {agentStatus || "Working on your update"}
-                      </TextShimmer>
-                      <Steps defaultOpen>
-                        <StepsTrigger>Agent run: Update your project</StepsTrigger>
-                        <StepsContent>
-                          <div className="space-y-1.5">
-                            {runSteps.map((step, i) => (
-                              <StepsItem
-                                key={`${step}-${i}`}
-                                className={i === runSteps.length - 1 ? "text-zinc-200" : undefined}
-                              >
-                                {step}
-                              </StepsItem>
-                            ))}
-                          </div>
-                        </StepsContent>
-                      </Steps>
-                      <Reasoning isStreaming={true}>
-                        <ReasoningTrigger>Show reasoning</ReasoningTrigger>
-                        <ReasoningContent className="ml-2 border-l-2 border-l-zinc-700 px-2 pb-1 text-zinc-400">
-                          {reasoningText}
-                        </ReasoningContent>
-                      </Reasoning>
-                      <Tool
-                        className="w-full"
-                        toolPart={{
-                          type: "code_generation",
-                          state: "processing",
-                          input: { task: agentStatus || "Applying requested updates", steps: runSteps.length },
-                        }}
+                    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-3 sm:p-4">
+                      <ThinkingBar
+                        text={agentStatus || "Working on your update"}
+                        steps={runSteps}
+                        isGenerating={isGenerating}
+                        currentFile={currentGeneratingFile}
                       />
                     </div>
                   )}
@@ -3812,38 +3797,12 @@ function ProjectContent() {
 
                 {/* Thinking bar + reasoning (agent-like) */}
                 {isGenerating && (
-                  <div className="space-y-3 rounded-2xl border border-zinc-800/70 bg-zinc-900/60 p-4">
-                    <TextShimmer className="text-sm">
-                      {agentStatus || "Working on your update"}
-                    </TextShimmer>
-                    <Steps defaultOpen>
-                      <StepsTrigger>Agent run: Update your project</StepsTrigger>
-                      <StepsContent>
-                        <div className="space-y-1.5">
-                          {runSteps.map((step, i) => (
-                            <StepsItem
-                              key={`${step}-${i}`}
-                              className={i === runSteps.length - 1 ? "text-zinc-200" : undefined}
-                            >
-                              {step}
-                            </StepsItem>
-                          ))}
-                        </div>
-                      </StepsContent>
-                    </Steps>
-                    <Reasoning isStreaming={true}>
-                      <ReasoningTrigger>Show reasoning</ReasoningTrigger>
-                      <ReasoningContent className="ml-2 border-l-2 border-l-zinc-700 px-2 pb-1 text-zinc-400">
-                        {reasoningText}
-                      </ReasoningContent>
-                    </Reasoning>
-                    <Tool
-                      className="w-full"
-                      toolPart={{
-                        type: "code_generation",
-                        state: "processing",
-                        input: { task: agentStatus || "Applying requested updates", steps: runSteps.length },
-                      }}
+                  <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-4">
+                    <ThinkingBar
+                      text={agentStatus || "Working on your update"}
+                      steps={runSteps}
+                      isGenerating={isGenerating}
+                      currentFile={currentGeneratingFile}
                     />
                   </div>
                 )}
