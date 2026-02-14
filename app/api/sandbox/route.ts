@@ -173,7 +173,23 @@ async function previewUrlResponding(
     
     clearTimeout(timeout)
     
-    const isOk = response.ok || response.status === 404 || (response.status >= 400 && response.status < 600)
+    const body = (await response.text().catch(() => "")).toLowerCase()
+    const looksClosedPort =
+      body.includes("closed port error") ||
+      body.includes("connection refused on port") ||
+      body.includes("there's no service running on port") ||
+      body.includes("there is no service running on port") ||
+      body.includes("sandbox is running but there's no service running on port") ||
+      body.includes("check the sandbox logs for more information")
+    if (looksClosedPort) {
+      return {
+        responding: false,
+        statusCode: response.status,
+        error: "closed-port-page",
+      }
+    }
+
+    const isOk = response.ok
     return {
       responding: isOk,
       statusCode: response.status,
@@ -183,6 +199,26 @@ async function previewUrlResponding(
       responding: false,
       error: err?.name === "AbortError" ? "timeout" : err?.message || "unknown",
     }
+  }
+}
+
+async function localHttpResponding(sandbox: Sandbox, port: number): Promise<boolean> {
+  try {
+    const result = await cmd(
+      sandbox,
+      `bash -c '
+        if command -v curl >/dev/null 2>&1; then
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 http://127.0.0.1:${port}/ || echo "000")
+          [ "$code" != "000" ] && [ "$code" != "000000" ] && echo "OK" || echo "NO"
+        else
+          node -e "const http=require(\"http\");const r=http.get({host:\"127.0.0.1\",port:${port},path:\"/\",timeout:4000},(res)=>{console.log(\"OK\");res.resume();});r.on(\"error\",()=>console.log(\"NO\"));r.on(\"timeout\",()=>{r.destroy();console.log(\"NO\");});"
+        fi
+      '`,
+      7000
+    )
+    return (result.stdout || "").includes("OK")
+  } catch {
+    return false
   }
 }
 
@@ -365,14 +401,20 @@ async function checkServerReady(
   const devLog = await readTail(sandbox, DEV_LOG_PATH, 100)
   const logReady = devLogShowsReady(devLog, port)
   const portReady = await portListening(sandbox, port)
+  const localReady = await localHttpResponding(sandbox, port)
   
-  console.log(`[checkServerReady] framework=${framework}, logReady=${logReady}, portReady=${portReady}`)
+  console.log(`[checkServerReady] framework=${framework}, logReady=${logReady}, portReady=${portReady}, localReady=${localReady}`)
+
+  if (localReady) {
+    return { ready: true, reason: "local-http-responding", logs: devLog }
+  }
   
   // Try URL check
   const urlCheck = await previewUrlResponding(sandbox, port)
   
-  if (urlCheck.responding) {
-    return { ready: true, reason: "url-responding", logs: devLog }
+  // Do not trust URL reachability alone; require at least one server signal.
+  if (urlCheck.responding && (portReady || logReady)) {
+    return { ready: true, reason: "url-responding-with-signal", logs: devLog }
   }
   
   // For Next.js: sometimes needs more time

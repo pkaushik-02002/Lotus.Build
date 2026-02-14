@@ -311,21 +311,21 @@ export function PreviewWithVisualEdit({
         {/* Hover highlight — only when visual edit is enabled */}
         {canEdit && enabled && hover && (
           <div
-            className="pointer-events-none absolute border-2 border-amber-400/70 rounded transition-all duration-75 z-10"
+            className="pointer-events-none absolute z-10 rounded border-2 border-zinc-900/45 transition-all duration-75"
             style={hoverStyle}
           />
         )}
         {/* Select overlay — only when visual edit is enabled */}
         {canEdit && enabled && select && (
           <div
-            className="absolute border-2 border-amber-400 bg-amber-400/10 rounded z-20"
+            className="absolute z-20 rounded border-2 border-zinc-900 bg-zinc-900/10"
             style={selectStyle}
           />
         )}
       </div>
       {/* Word-style design panel (side-by-side when element selected) */}
       {canEdit && enabled && select && (
-        <div className="w-full sm:w-[280px] shrink-0 border-t sm:border-t-0 sm:border-l border-zinc-800 flex flex-col min-h-0 max-h-[50vh] sm:max-h-none bg-zinc-900">
+        <div className="flex min-h-0 w-full shrink-0 flex-col border-zinc-200 bg-[#f5f5f2] max-h-[58vh] border-t sm:max-h-none sm:w-[340px] sm:border-l sm:border-t-0">
           <VisualEditDesignPanel
             key={select.id}
             selectedId={select.id}
@@ -337,18 +337,18 @@ export function PreviewWithVisualEdit({
               setDraft(null)
             }}
           />
-          <div className="p-2 border-t border-zinc-800 bg-zinc-900 shrink-0">
+          <div className="shrink-0 border-t border-zinc-200 bg-white p-3">
             <PromptInput
               value={editInput}
               onValueChange={setEditInput}
               isLoading={isSavingManualEdit}
               onSubmit={handleEditSubmit}
-              className="w-full border-zinc-800/70 bg-zinc-900/90 p-2"
+              className="w-full rounded-2xl border border-zinc-200 bg-[#f8f8f5] p-2"
             >
               <div className="relative">
                 <PromptInputTextarea
                   placeholder="Ask AI to change this selected element..."
-                  className="min-h-[56px] border-zinc-800/60 px-2.5 py-2 pr-12 text-xs"
+                  className="min-h-[64px] border-zinc-200 bg-transparent px-3 py-2.5 pr-12 text-xs text-zinc-800 placeholder:text-zinc-500"
                 />
                 <PromptInputAction
                   tooltip={isSavingManualEdit ? "Working..." : "Send AI edit request"}
@@ -358,7 +358,7 @@ export function PreviewWithVisualEdit({
                     type="button"
                     variant="default"
                     size="icon"
-                    className="h-7 w-7 rounded-full bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
+                    className="h-8 w-8 rounded-full bg-zinc-900 text-white hover:bg-black"
                     onClick={handleEditSubmit}
                     disabled={isSavingManualEdit}
                   >
@@ -375,7 +375,7 @@ export function PreviewWithVisualEdit({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-8 text-xs border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+                  className="h-9 rounded-lg border-zinc-300 bg-white text-xs text-zinc-700 hover:bg-zinc-100"
                   disabled={
                     !onSaveManualEdit ||
                     !draft ||

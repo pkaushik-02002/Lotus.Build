@@ -14,6 +14,11 @@ export interface Message {
 
 export type ProjectVisibility = "public" | "private" | "link-only"
 
+export interface WebsiteSettings {
+  siteName?: string
+  envVars?: Array<{ key: string; value: string }>
+}
+
 export interface Project {
   id: string
   name?: string
@@ -33,12 +38,14 @@ export interface Project {
   githubSyncedAt?: Date | { toDate: () => Date }
   suggestsBackend?: boolean
   supabaseUrl?: string
+  supabaseProjectRef?: string
   visibility?: ProjectVisibility
   ownerId?: string
   editorIds?: string[]
   vercelToken?: string
   vercelDeployUrl?: string
   vercelDeploymentId?: string
+  websiteSettings?: WebsiteSettings
 }
 
 export interface FileNode {

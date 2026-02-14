@@ -60,7 +60,7 @@ const logos = ["Y Combinator", "Indie Hackers", "Product Hunt", "TechCrunch", "H
 export function TestimonialsSection() {
   return (
     <section id="testimonials" className="px-4 py-20 sm:px-6 sm:py-24">
-      <div className="mx-auto max-w-6xl rounded-[2rem] border border-zinc-800/70 bg-zinc-900/30 px-5 py-10 sm:px-8 sm:py-12 lg:px-12">
+      <div className="mx-auto max-w-6xl rounded-[2rem] border border-zinc-200 bg-white px-5 py-10 sm:px-8 sm:py-12 lg:px-12">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -68,9 +68,9 @@ export function TestimonialsSection() {
           viewport={{ once: true }}
           className="flex flex-col items-center justify-center max-w-xl mx-auto mb-12"
         >
-          <div className="border border-zinc-800 py-1.5 px-4 rounded-full text-sm text-zinc-400">Testimonials</div>
+          <div className="border border-zinc-200 py-1.5 px-4 rounded-full text-sm text-zinc-600">Testimonials</div>
 
-          <h2 className="font-display text-4xl md:text-5xl font-bold text-zinc-100 mt-6 text-center tracking-tight">
+          <h2 className="font-display text-4xl md:text-5xl font-bold text-zinc-900 mt-6 text-center tracking-tight">
             Loved by builders
           </h2>
           <p className="text-center mt-4 text-zinc-500 text-lg text-balance">
@@ -78,15 +78,15 @@ export function TestimonialsSection() {
           </p>
         </motion.div>
 
-        <div className="flex justify-center gap-4 sm:gap-6 [mask-image:linear-gradient(to_bottom,transparent,black_25%,black_75%,transparent)] max-h-[680px] sm:max-h-[740px] overflow-hidden">
+        <div className="flex justify-center gap-4 sm:gap-6  max-h-[680px] sm:max-h-[740px] overflow-hidden">
           <TestimonialsColumn testimonials={firstColumn} duration={15} />
           <TestimonialsColumn testimonials={secondColumn} className="hidden md:block" duration={19} />
           <TestimonialsColumn testimonials={thirdColumn} className="hidden lg:block" duration={17} />
         </div>
 
-        <div className="mt-14 border-t border-zinc-800/50 pt-12 sm:mt-16 sm:pt-16">
+        <div className="mt-14 border-t border-zinc-200 pt-12 sm:mt-16 sm:pt-16">
           <p className="text-center text-sm text-zinc-500 mb-8">Trusted by industry leaders</p>
-          <div className="relative overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_20%,black_80%,transparent)]">
+          <div className="relative overflow-hidden ">
             <motion.div
               className="flex gap-12 md:gap-16"
               animate={{
@@ -116,3 +116,5 @@ export function TestimonialsSection() {
     </section>
   )
 }
+
+

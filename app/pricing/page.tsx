@@ -113,17 +113,14 @@ export default function PricingPage() {
   const remaining = userData ? Math.max(0, userData.tokenUsage?.remaining ?? tokensLimit - tokensUsed) : 0
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-zinc-950">
-      {/* Subtle gradient background */}
-      <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(245,158,11,0.08),transparent)]" />
-      <div className="fixed inset-0 -z-10 bg-[linear-gradient(to_bottom,rgba(9,9,11,0.98),rgb(9,9,11))]" />
+    <main className="min-h-screen overflow-x-hidden bg-[#f5f5f2]">
 
       <Navbar />
       <div className="pt-20 sm:pt-28 pb-16 sm:pb-24 px-4 sm:px-6 lg:px-8 safe-area-inset-top safe-area-inset-bottom">
         <div className="max-w-7xl mx-auto w-full min-w-0">
           <Link
             href="/"
-            className="group inline-flex items-center gap-2 rounded-full border border-zinc-800/80 bg-zinc-900/40 px-4 py-2 text-sm text-zinc-400 transition-all duration-200 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200 mb-8 sm:mb-10 touch-manipulation"
+            className="group inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-600 transition-all duration-200 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-800 mb-8 sm:mb-10 touch-manipulation"
             aria-label="Back to home"
           >
             <ArrowLeft className="w-4 h-4 shrink-0 transition-transform group-hover:-translate-x-0.5" />
@@ -131,11 +128,11 @@ export default function PricingPage() {
           </Link>
 
           {/* Header */}
-          <div className="mb-10 sm:mb-14 rounded-3xl border border-zinc-800/70 bg-zinc-900/35 p-6 sm:p-8 shadow-[0_30px_80px_-50px_rgba(0,0,0,0.95)]">
+          <div className="mb-10 sm:mb-14 rounded-3xl border border-zinc-200 bg-white p-6 sm:p-8 shadow-[0_30px_80px_-50px_rgba(0,0,0,0.95)]">
             <p className="mb-2 text-xs font-medium uppercase tracking-widest text-amber-400/90">
               Pricing
             </p>
-            <h1 className="font-display text-3xl font-bold tracking-tight text-zinc-100 sm:text-4xl md:text-5xl mb-3">
+            <h1 className="font-display text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl md:text-5xl mb-3">
               Plans & credits
             </h1>
             <p className="max-w-xl text-base text-zinc-500 sm:text-lg">
@@ -146,16 +143,16 @@ export default function PricingPage() {
           {/* Plan summary + credits (when logged in) */}
           {user && userData && (
             <div className="mb-10 sm:mb-12">
-              <div className="flex flex-col gap-5 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 backdrop-blur-sm shadow-xl shadow-black/20">
+              <div className="flex flex-col gap-5 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 shadow-sm">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-4">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500/30 to-amber-600/10 ring-1 ring-amber-500/20">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-zinc-100 ring-1 ring-zinc-200">
                       <span className="font-display text-lg font-semibold text-amber-400">
                         {(planName || "Free").charAt(0)}
                       </span>
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-zinc-100 truncate">You&apos;re on {planName}</p>
+                      <p className="font-semibold text-zinc-900 truncate">You&apos;re on {planName}</p>
                       <p className="mt-0.5 text-sm text-zinc-500">
                         {userData.tokenUsage?.periodEnd
                           ? `Renews ${new Date(userData.tokenUsage.periodEnd).toLocaleDateString()}`
@@ -167,7 +164,7 @@ export default function PricingPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="rounded-lg border-zinc-600/80 bg-zinc-800/50 text-zinc-200 shadow-sm transition-all hover:border-zinc-500 hover:bg-zinc-700/50 hover:text-zinc-100"
+                      className="rounded-lg border-zinc-600/80 bg-zinc-100 text-zinc-800 shadow-sm transition-all hover:border-zinc-500 hover:bg-zinc-700/50 hover:text-zinc-900"
                     >
                       Manage
                     </Button>
@@ -175,20 +172,17 @@ export default function PricingPage() {
                 </div>
 
                 <div>
-                  <p className="mb-3 font-semibold text-zinc-100">Credits remaining</p>
+                  <p className="mb-3 font-semibold text-zinc-900">Credits remaining</p>
                   <div className="mb-3 flex items-baseline gap-2">
-                    <span className="font-display text-3xl font-bold tabular-nums text-zinc-100">
+                    <span className="font-display text-3xl font-bold tabular-nums text-zinc-900">
                       {remaining}
                     </span>
                     <span className="text-sm text-zinc-500">
                       of {tokensLimit.toLocaleString()}
                     </span>
                   </div>
-                  <div className="mb-4 h-2.5 overflow-hidden rounded-full bg-zinc-800/80">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-500 ease-out"
-                      style={{ width: `${tokensLimit ? Math.min(100, (remaining / tokensLimit) * 100) : 0}%` }}
-                    />
+                  <div className="mb-4 h-2.5 overflow-hidden rounded-full bg-zinc-100">
+                    <div className="h-full rounded-full bg-zinc-800 transition-all duration-500 ease-out" style={{ width: `${tokensLimit ? Math.min(100, (remaining / tokensLimit) * 100) : 0}%` }} />
                   </div>
                   <p className="mb-3 flex items-center gap-2 text-sm text-zinc-500">
                     <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
@@ -241,14 +235,14 @@ export default function PricingPage() {
                     className={cn(
                       "flex min-h-0 flex-col rounded-2xl border transition-all duration-300",
                       "p-6 sm:p-7 lg:p-8",
-                      "backdrop-blur-sm shadow-xl shadow-black/10",
+                      "shadow-sm",
                       recommended
-                        ? "border-amber-500/40 bg-gradient-to-b from-zinc-900/95 to-zinc-900/80 ring-1 ring-amber-500/20 shadow-amber-500/5"
-                        : "border-zinc-800/80 bg-zinc-900/60 hover:border-zinc-700/80 hover:bg-zinc-900/70 hover:shadow-2xl hover:shadow-black/15"
+                        ? "border-amber-500/40 bg-white ring-1 ring-amber-500/20"
+                        : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
                     )}
                   >
                     <div className="mb-4 flex items-start justify-between gap-3">
-                      <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-100 sm:text-2xl truncate">
+                      <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl truncate">
                         {plan.name}
                       </h2>
                       {recommended && (
@@ -262,7 +256,7 @@ export default function PricingPage() {
                     </p>
 
                     <div className="mb-1 flex items-baseline gap-1.5">
-                      <span className="font-display text-3xl font-bold tabular-nums tracking-tight text-zinc-100 sm:text-4xl">
+                      <span className="font-display text-3xl font-bold tabular-nums tracking-tight text-zinc-900 sm:text-4xl">
                         {priceStr}
                       </span>
                       <span className="text-base text-zinc-500">{period}</span>
@@ -285,8 +279,8 @@ export default function PricingPage() {
                         >
                           <SelectTrigger
                             className={cn(
-                              "h-12 w-full rounded-xl border border-zinc-700/80 bg-zinc-800/60 py-3 px-4 text-zinc-200 transition-all",
-                              "hover:border-zinc-600 hover:bg-zinc-800/80",
+                              "h-12 w-full rounded-xl border border-zinc-300 bg-zinc-100 py-3 px-4 text-zinc-800 transition-all",
+                              "hover:border-zinc-600 hover:bg-zinc-100",
                               "focus:ring-2 focus:ring-amber-500/30 focus:ring-offset-0 focus:ring-offset-zinc-900"
                             )}
                           >
@@ -304,7 +298,7 @@ export default function PricingPage() {
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent
-                            className="max-h-[280px] rounded-xl border-zinc-700/80 bg-zinc-900/95 p-1 backdrop-blur-xl"
+                            className="max-h-[280px] rounded-xl border-zinc-300 bg-white p-1"
                             align="start"
                           >
                             {tiers.map((tier, i) => {
@@ -313,7 +307,7 @@ export default function PricingPage() {
                                 <SelectItem
                                   key={i}
                                   value={String(i)}
-                                  className="flex flex-col items-start gap-0.5 rounded-lg py-3 pl-3 pr-8 text-zinc-200 focus:bg-zinc-800 focus:text-zinc-100 data-[highlighted]:bg-zinc-800"
+                                  className="flex flex-col items-start gap-0.5 rounded-lg py-3 pl-3 pr-8 text-zinc-800 focus:bg-zinc-100 focus:text-zinc-900 data-[highlighted]:bg-zinc-100"
                                 >
                                   <span className="font-semibold">
                                     {tier.tokensPerMonth >= 1000
@@ -343,7 +337,7 @@ export default function PricingPage() {
                           <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
                             <Check className="h-3 w-3 text-amber-400" strokeWidth={2.5} />
                           </span>
-                          <span className="text-sm leading-snug text-zinc-400 break-words sm:text-base">
+                          <span className="text-sm leading-snug text-zinc-600 break-words sm:text-base">
                             {feature}
                           </span>
                         </li>
@@ -355,7 +349,7 @@ export default function PricingPage() {
                         <Link href="/projects" className="block w-full">
                           <Button
                             variant="outline"
-                            className="h-12 w-full rounded-xl border-zinc-600/80 bg-zinc-800/40 font-medium text-zinc-200 shadow-sm transition-all hover:border-zinc-500 hover:bg-zinc-700/50 hover:text-zinc-100"
+                            className="h-12 w-full rounded-xl border-zinc-600/80 bg-zinc-100 font-medium text-zinc-800 shadow-sm transition-all hover:border-zinc-500 hover:bg-zinc-700/50 hover:text-zinc-900"
                           >
                             Start Building
                           </Button>
@@ -367,7 +361,7 @@ export default function PricingPage() {
                             "h-12 w-full rounded-xl font-semibold shadow-lg transition-all hover:shadow-xl active:scale-[0.99] border-0",
                             recommended
                               ? "bg-amber-500 text-zinc-950 hover:bg-amber-400"
-                              : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                              : "bg-zinc-100 text-zinc-900 hover:bg-zinc-700"
                           )}
                           onClick={() => handleSubscribe(effectivePriceId!, effectiveQuantity)}
                         >
@@ -384,7 +378,7 @@ export default function PricingPage() {
                             "h-12 w-full rounded-xl font-semibold border-0 opacity-70",
                             recommended
                               ? "bg-amber-500/80 text-zinc-950"
-                              : "bg-zinc-800 text-zinc-400"
+                              : "bg-zinc-100 text-zinc-600"
                           )}
                         >
                           Subscribe to {plan.name}
@@ -412,3 +406,4 @@ export default function PricingPage() {
     </main>
   )
 }
+

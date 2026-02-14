@@ -33,11 +33,8 @@ export const TestimonialsColumn = (props: {
           ...new Array(2).fill(0).map((_, index) => (
             <React.Fragment key={index}>
               {props.testimonials.map(({ text, image, name, role }, i) => (
-                <div
-                  className="w-full max-w-sm rounded-2xl border border-zinc-800/50 bg-zinc-900/50 p-6 shadow-lg shadow-black/20 backdrop-blur-sm sm:p-8"
-                  key={i}
-                >
-                  <p className="text-zinc-300 leading-relaxed">{text}</p>
+                <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm sm:p-8" key={i}>
+                  <p className="leading-relaxed text-zinc-700">{text}</p>
                   <div className="flex items-center gap-3 mt-6">
                     {image ? (
                       <img
@@ -45,18 +42,18 @@ export const TestimonialsColumn = (props: {
                         height={40}
                         src={image}
                         alt={name}
-                        className="h-10 w-10 rounded-full object-cover ring-2 ring-zinc-800"
+                        className="h-10 w-10 rounded-full object-cover ring-2 ring-zinc-200"
                       />
                     ) : (
                       <div
-                        className="h-10 w-10 rounded-full ring-2 ring-zinc-800 flex items-center justify-center bg-zinc-700 text-zinc-200 text-sm font-medium shrink-0"
+                        className="h-10 w-10 rounded-full ring-2 ring-zinc-200 flex items-center justify-center bg-zinc-100 text-zinc-700 text-sm font-medium shrink-0"
                         aria-hidden
                       >
                         {name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
                       </div>
                     )}
                     <div className="flex flex-col">
-                      <span className="font-medium text-zinc-100 tracking-tight leading-5">{name}</span>
+                      <span className="font-medium text-zinc-900 tracking-tight leading-5">{name}</span>
                       <span className="text-sm text-zinc-500 leading-5">{role}</span>
                     </div>
                   </div>

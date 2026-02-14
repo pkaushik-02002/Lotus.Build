@@ -128,7 +128,7 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
         <link
           href="https://fonts.googleapis.com/css2?family=Cal+Sans&family=Instrument+Sans:wght@400;500;600;700&display=swap"
@@ -139,7 +139,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className={`${manrope.variable} font-sans antialiased bg-zinc-950 text-zinc-100 overflow-x-hidden`}>
+      <body className={`${manrope.variable} font-sans antialiased bg-[#f5f5f2] text-[#1f1f1f] overflow-x-hidden`}>
         <AuthProvider>
           {children}
         </AuthProvider>
@@ -148,3 +148,4 @@ export default function RootLayout({
     </html>
   )
 }
+

@@ -86,23 +86,23 @@ export default function SignupPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
+      <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-zinc-600" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Link href="/" className="text-2xl font-bold text-zinc-100">
+          <Link href="/" className="text-2xl font-bold text-zinc-900">
             BuildKit
           </Link>
           <p className="text-zinc-500 mt-2">Create your account</p>
         </div>
 
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+        <div className="bg-white border border-zinc-200 rounded-xl p-6">
           {error && (
             <div className="mb-4 p-3 bg-red-900/20 border border-red-800 rounded-lg text-red-400 text-sm">
               {error}
@@ -114,7 +114,7 @@ export default function SignupPage() {
             <Button
               onClick={handleGoogleSignIn}
               disabled={isLoading}
-              className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700"
+              className="w-full bg-zinc-100 hover:bg-zinc-700 text-zinc-900 border border-zinc-300"
               variant="outline"
             >
               <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
@@ -141,7 +141,7 @@ export default function SignupPage() {
             <Button
               onClick={handleGithubSignIn}
               disabled={isLoading}
-              className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700"
+              className="w-full bg-zinc-100 hover:bg-zinc-700 text-zinc-900 border border-zinc-300"
               variant="outline"
             >
               <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
@@ -153,17 +153,17 @@ export default function SignupPage() {
 
           <div className="relative my-6">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-zinc-800" />
+              <div className="w-full border-t border-zinc-200" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-zinc-900/50 text-zinc-500">or continue with email</span>
+              <span className="px-2 bg-white text-zinc-500">or continue with email</span>
             </div>
           </div>
 
           {/* Email Form */}
           <form onSubmit={handleEmailSignUp} className="space-y-4">
             <div>
-              <Label htmlFor="email" className="text-zinc-300">
+              <Label htmlFor="email" className="text-zinc-700">
                 Email
               </Label>
               <Input
@@ -172,12 +172,12 @@ export default function SignupPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                className="mt-1 bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+                className="mt-1 bg-zinc-100 border-zinc-300 text-zinc-900 placeholder:text-zinc-500"
                 required
               />
             </div>
             <div>
-              <Label htmlFor="password" className="text-zinc-300">
+              <Label htmlFor="password" className="text-zinc-700">
                 Password
               </Label>
               <Input
@@ -186,12 +186,12 @@ export default function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Create a password"
-                className="mt-1 bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+                className="mt-1 bg-zinc-100 border-zinc-300 text-zinc-900 placeholder:text-zinc-500"
                 required
               />
             </div>
             <div>
-              <Label htmlFor="confirmPassword" className="text-zinc-300">
+              <Label htmlFor="confirmPassword" className="text-zinc-700">
                 Confirm Password
               </Label>
               <Input
@@ -200,7 +200,7 @@ export default function SignupPage() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm your password"
-                className="mt-1 bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+                className="mt-1 bg-zinc-100 border-zinc-300 text-zinc-900 placeholder:text-zinc-500"
                 required
               />
             </div>
@@ -222,7 +222,7 @@ export default function SignupPage() {
 
           <p className="mt-6 text-center text-sm text-zinc-500">
             Already have an account?{" "}
-            <Link href={`/login?redirect=${encodeURIComponent(redirect)}`} className="text-zinc-300 hover:text-zinc-100">
+            <Link href={`/login?redirect=${encodeURIComponent(redirect)}`} className="text-zinc-700 hover:text-zinc-900">
               Sign in
             </Link>
           </p>
@@ -235,3 +235,4 @@ export default function SignupPage() {
     </div>
   )
 }
+

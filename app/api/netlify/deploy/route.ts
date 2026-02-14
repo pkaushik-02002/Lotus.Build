@@ -190,6 +190,12 @@ export async function POST(req: Request) {
 
         send({ type: "step", step: "build", status: "running", message: "Building project..." })
 
+        const hasTsconfigCheck = await sandbox.commands.run(
+          "bash -lc \"cd /home/user/project && [ -f tsconfig.json ] && echo yes || echo no\"",
+          { timeoutMs: 10000 }
+        )
+        const hasTsconfig = (hasTsconfigCheck.stdout || "").trim() === "yes"
+
         const build = await sandbox.commands.run("bash -lc \"cd /home/user/project && npm run build\"", {
           timeoutMs: 300000,
           onStdout: (d) => send({ type: "log", stream: "stdout", step: "build", message: (d as any)?.line || String(d) }),
@@ -197,10 +203,38 @@ export async function POST(req: Request) {
         })
 
         if (build.exitCode !== 0) {
-          send({ type: "step", step: "build", status: "failed", message: "Build failed" })
-          send({ type: "error", error: "Build failed" })
-          controller.close()
-          return
+          const buildOutput = `${build.stdout || ""}\n${build.stderr || ""}`
+          const looksLikeTscHelp =
+            /The TypeScript Compiler|tsc:\s+The TypeScript Compiler|COMMON COMMANDS/i.test(buildOutput)
+
+          if (!hasTsconfig || looksLikeTscHelp) {
+            send({
+              type: "log",
+              stream: "stderr",
+              step: "build",
+              message: "TypeScript config missing or invalid for build script. Retrying with Vite production build...",
+            })
+
+            const viteFallback = await sandbox.commands.run("bash -lc \"cd /home/user/project && npx vite build\"", {
+              timeoutMs: 300000,
+              onStdout: (d) =>
+                send({ type: "log", stream: "stdout", step: "build", message: (d as any)?.line || String(d) }),
+              onStderr: (d) =>
+                send({ type: "log", stream: "stderr", step: "build", message: (d as any)?.line || String(d) }),
+            })
+
+            if (viteFallback.exitCode !== 0) {
+              send({ type: "step", step: "build", status: "failed", message: "Build failed" })
+              send({ type: "error", error: "Build failed" })
+              controller.close()
+              return
+            }
+          } else {
+            send({ type: "step", step: "build", status: "failed", message: "Build failed" })
+            send({ type: "error", error: "Build failed" })
+            controller.close()
+            return
+          }
         }
 
         send({ type: "step", step: "build", status: "success", message: "Build complete" })

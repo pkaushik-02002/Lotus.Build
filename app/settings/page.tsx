@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
@@ -146,8 +146,8 @@ function SettingsContent() {
 
   if (loading || !user || !userData) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
+      <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-zinc-600" />
       </div>
     )
   }
@@ -181,9 +181,7 @@ function SettingsContent() {
   }
 
   return (
-    <main className="relative min-h-screen bg-zinc-950 overflow-hidden">
-      <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_8%_0%,rgba(255,255,255,0.06),transparent_32%),radial-gradient(circle_at_100%_15%,rgba(255,255,255,0.04),transparent_30%)]" />
-      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-20 [background:linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:56px_56px]" />
+    <main className="relative min-h-screen bg-[#f5f5f2] overflow-hidden">
 
       <Navbar />
 
@@ -191,121 +189,121 @@ function SettingsContent() {
         <div className="max-w-6xl mx-auto">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 rounded-full border border-zinc-800/80 bg-zinc-900/40 px-4 py-2 text-sm text-zinc-500 hover:text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/50 transition-colors mb-8"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 transition-colors mb-8"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to home
           </Link>
 
-          <section className="rounded-3xl border border-zinc-800/70 bg-zinc-900/35 px-5 py-8 sm:px-8 sm:py-10 shadow-[0_30px_100px_-60px_rgba(0,0,0,0.95)]">
-            <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-100">Settings</h1>
+          <section className="rounded-3xl border border-zinc-200 bg-white px-5 py-8 sm:px-8 sm:py-10 shadow-[0_30px_100px_-60px_rgba(0,0,0,0.95)]">
+            <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-900">Settings</h1>
             <p className="text-zinc-500 text-sm sm:text-base mt-2">Manage your account, usage, and analytics.</p>
           </section>
 
           <div className="mt-8 sm:mt-10 grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-7 space-y-6">
-              <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/45 p-5 sm:p-6 backdrop-blur-sm">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center">
-                    <User className="w-5 h-5 text-zinc-400" />
+                  <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center">
+                    <User className="w-5 h-5 text-zinc-600" />
                   </div>
                   <div>
-                    <h2 className="font-heading text-lg font-semibold text-zinc-100">Profile</h2>
+                    <h2 className="font-heading text-lg font-semibold text-zinc-900">Profile</h2>
                     <p className="text-xs text-zinc-500">Your account details</p>
                   </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
-                  <Avatar className="h-16 w-16 sm:h-20 sm:w-20 border-2 border-zinc-700 shrink-0">
+                  <Avatar className="h-16 w-16 sm:h-20 sm:w-20 border-2 border-zinc-300 shrink-0">
                     <AvatarImage src={userData.photoURL || undefined} alt={userData.displayName || "User"} />
-                    <AvatarFallback className="bg-zinc-800 text-zinc-300 text-xl">
+                    <AvatarFallback className="bg-zinc-100 text-zinc-700 text-xl">
                       {getInitials(userData.displayName, userData.email)}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0 space-y-3">
                     <div>
                       <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Display name</label>
-                      <p className="text-zinc-100 font-medium mt-1 truncate">{userData.displayName || "-"}</p>
+                      <p className="text-zinc-900 font-medium mt-1 truncate">{userData.displayName || "-"}</p>
                     </div>
-                    <div className="flex items-center gap-2 text-zinc-400">
+                    <div className="flex items-center gap-2 text-zinc-600">
                       <Mail className="w-4 h-4 shrink-0" />
-                      <span className="text-sm text-zinc-300 truncate">{userData.email || "-"}</span>
+                      <span className="text-sm text-zinc-700 truncate">{userData.email || "-"}</span>
                     </div>
                   </div>
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/45 p-5 sm:p-6 backdrop-blur-sm">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center">
-                    <ShieldCheck className="w-5 h-5 text-zinc-400" />
+                  <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5 text-zinc-600" />
                   </div>
                   <div>
-                    <h2 className="font-heading text-lg font-semibold text-zinc-100">Account overview</h2>
+                    <h2 className="font-heading text-lg font-semibold text-zinc-900">Account overview</h2>
                     <p className="text-xs text-zinc-500">Live metadata for your account</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <p className="text-[11px] uppercase tracking-wider text-zinc-500">User ID</p>
-                    <p className="mt-1 text-sm text-zinc-200 font-mono truncate">{userData.uid}</p>
+                    <p className="mt-1 text-sm text-zinc-800 font-mono truncate">{userData.uid}</p>
                   </div>
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <p className="text-[11px] uppercase tracking-wider text-zinc-500">Member since</p>
-                    <p className="mt-1 text-sm text-zinc-200">
+                    <p className="mt-1 text-sm text-zinc-800">
                       {createdAt ? createdAt.toLocaleDateString() : "-"}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <p className="text-[11px] uppercase tracking-wider text-zinc-500">Current workspace</p>
-                    <p className="mt-1 text-sm text-zinc-200 truncate">{currentWorkspace?.name || "Personal"}</p>
+                    <p className="mt-1 text-sm text-zinc-800 truncate">{currentWorkspace?.name || "Personal"}</p>
                   </div>
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <p className="text-[11px] uppercase tracking-wider text-zinc-500">Total workspaces</p>
-                    <p className="mt-1 text-sm text-zinc-200">{Array.isArray(workspaces) ? workspaces.length : 0}</p>
+                    <p className="mt-1 text-sm text-zinc-800">{Array.isArray(workspaces) ? workspaces.length : 0}</p>
                   </div>
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/45 p-5 sm:p-6 backdrop-blur-sm">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center">
-                    <Activity className="w-5 h-5 text-zinc-400" />
+                  <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center">
+                    <Activity className="w-5 h-5 text-zinc-600" />
                   </div>
                   <div>
-                    <h2 className="font-heading text-lg font-semibold text-zinc-100">Project analytics</h2>
+                    <h2 className="font-heading text-lg font-semibold text-zinc-900">Project analytics</h2>
                     <p className="text-xs text-zinc-500">Real-time project insights</p>
                   </div>
                 </div>
 
                 {projectsLoading ? (
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-4 text-sm text-zinc-400 flex items-center gap-2">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-4 text-sm text-zinc-600 flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Loading analytics...
                   </div>
                 ) : (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                      <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                         <p className="text-[11px] uppercase tracking-wider text-zinc-500">Projects</p>
-                        <p className="mt-1 text-lg font-semibold text-zinc-100">{analytics.total}</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-900">{analytics.total}</p>
                       </div>
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                      <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                         <p className="text-[11px] uppercase tracking-wider text-zinc-500">Success rate</p>
-                        <p className="mt-1 text-lg font-semibold text-zinc-100">{analytics.successRate}%</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-900">{analytics.successRate}%</p>
                       </div>
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                      <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                         <p className="text-[11px] uppercase tracking-wider text-zinc-500">This month</p>
-                        <p className="mt-1 text-lg font-semibold text-zinc-100">{analytics.monthProjects}</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-900">{analytics.monthProjects}</p>
                       </div>
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                      <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                         <p className="text-[11px] uppercase tracking-wider text-zinc-500">Avg prompt</p>
-                        <p className="mt-1 text-lg font-semibold text-zinc-100">{analytics.avgPromptLength} chars</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-900">{analytics.avgPromptLength} chars</p>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-4 space-y-3">
+                      <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-4 space-y-3">
                         <p className="text-xs uppercase tracking-wider text-zinc-500">Status breakdown</p>
                         {[
                           { label: "Completed", value: analytics.complete, color: "bg-emerald-500" },
@@ -317,10 +315,10 @@ function SettingsContent() {
                           return (
                             <div key={item.label} className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs">
-                                <span className="text-zinc-400">{item.label}</span>
-                                <span className="text-zinc-300">{item.value}</span>
+                                <span className="text-zinc-600">{item.label}</span>
+                                <span className="text-zinc-700">{item.value}</span>
                               </div>
-                              <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                              <div className="h-1.5 rounded-full bg-zinc-100 overflow-hidden">
                                 <div className={`h-full ${item.color} rounded-full`} style={{ width: `${ratio}%` }} />
                               </div>
                             </div>
@@ -328,14 +326,14 @@ function SettingsContent() {
                         })}
                       </div>
 
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-4 space-y-3">
+                      <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-4 space-y-3">
                         <p className="text-xs uppercase tracking-wider text-zinc-500">Top models</p>
                         {analytics.topModels.length === 0 ? (
                           <p className="text-sm text-zinc-500">No model usage yet.</p>
                         ) : (
                           analytics.topModels.map(([model, count]) => (
                             <div key={model} className="flex items-center justify-between text-sm">
-                              <span className="text-zinc-300 truncate pr-2">{model}</span>
+                              <span className="text-zinc-700 truncate pr-2">{model}</span>
                               <span className="text-zinc-500">{count}</span>
                             </div>
                           ))
@@ -343,23 +341,23 @@ function SettingsContent() {
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-4">
+                    <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-4">
                       <p className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Recent activity</p>
                       {analytics.recentProjects.length === 0 ? (
                         <p className="text-sm text-zinc-500">No recent project activity.</p>
                       ) : (
                         <div className="space-y-2.5">
                           {analytics.recentProjects.map((project) => (
-                            <div key={project.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-3 py-2">
+                            <div key={project.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2">
                               <div className="min-w-0">
-                                <p className="text-sm text-zinc-200 truncate">
+                                <p className="text-sm text-zinc-800 truncate">
                                   {project.prompt?.trim() ? project.prompt : "Untitled project"}
                                 </p>
                                 <p className="text-xs text-zinc-500 mt-0.5">
                                   {toDate(project.createdAt)?.toLocaleDateString() || "Unknown date"}
                                 </p>
                               </div>
-                              <span className="text-[11px] uppercase tracking-wider text-zinc-400 shrink-0">
+                              <span className="text-[11px] uppercase tracking-wider text-zinc-600 shrink-0">
                                 {project.status}
                               </span>
                             </div>
@@ -371,13 +369,13 @@ function SettingsContent() {
                 )}
               </section>
 
-              <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/45 p-5 sm:p-6 backdrop-blur-sm">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center">
-                    <SettingsIcon className="w-5 h-5 text-zinc-400" />
+                  <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center">
+                    <SettingsIcon className="w-5 h-5 text-zinc-600" />
                   </div>
                   <div>
-                    <h2 className="font-heading text-lg font-semibold text-zinc-100">Connected services</h2>
+                    <h2 className="font-heading text-lg font-semibold text-zinc-900">Connected services</h2>
                     <p className="text-xs text-zinc-500">Manage integrations from your projects</p>
                   </div>
                 </div>
@@ -388,19 +386,19 @@ function SettingsContent() {
             </div>
 
             <div className="lg:col-span-5">
-              <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/45 p-5 sm:p-6 backdrop-blur-sm lg:sticky lg:top-24">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 lg:sticky lg:top-24">
                 <div className="flex items-center justify-between mb-5 gap-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                      <Sparkles className="w-5 h-5 text-zinc-400" />
+                    <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center shrink-0">
+                      <Sparkles className="w-5 h-5 text-zinc-600" />
                     </div>
                     <div className="min-w-0">
-                      <h2 className="font-heading text-lg font-semibold text-zinc-100 truncate">Plan & usage</h2>
+                      <h2 className="font-heading text-lg font-semibold text-zinc-900 truncate">Plan & usage</h2>
                       <p className="text-xs text-zinc-500">Token usage this period</p>
                     </div>
                   </div>
                   <Link href="/pricing" className="shrink-0">
-                    <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 h-9 text-xs">
+                    <Button size="sm" variant="outline" className="border-zinc-300 text-zinc-700 hover:bg-zinc-100 h-9 text-xs">
                       Upgrade
                     </Button>
                   </Link>
@@ -408,75 +406,72 @@ function SettingsContent() {
 
                 <div className="flex items-center gap-2 mb-2">
                   <Coins className="w-4 h-4 text-zinc-500" />
-                  <span className="text-sm text-zinc-400 capitalize">{userData.planName || "Free"} plan</span>
+                  <span className="text-sm text-zinc-600 capitalize">{userData.planName || "Free"} plan</span>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs">
                     <span className="text-zinc-500">Tokens used</span>
-                    <span className="text-zinc-300">
+                    <span className="text-zinc-700">
                       {userData.tokenUsage.used.toLocaleString()} / {tokensLimit.toLocaleString()}
                     </span>
                   </div>
-                  <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all bg-gradient-to-r from-amber-400 to-yellow-500"
-                      style={{ width: `${Math.min(tokenPercentage, 100)}%` }}
-                    />
+                  <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-zinc-800 transition-all" style={{ width: `${Math.min(tokenPercentage, 100)}%` }} />
                   </div>
                 </div>
 
                 <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <div className="flex items-center gap-2 text-zinc-500 text-[11px] uppercase tracking-wider">
                       <CalendarDays className="w-3.5 h-3.5" />
                       Billing cycle
                     </div>
-                    <p className="mt-1 text-sm text-zinc-200">
+                    <p className="mt-1 text-sm text-zinc-800">
                       {periodStart ? periodStart.toLocaleDateString() : "-"} - {periodEnd ? periodEnd.toLocaleDateString() : "-"}
                     </p>
                     <p className="mt-1 text-xs text-zinc-500">{daysLeft} days left</p>
                   </div>
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <div className="flex items-center gap-2 text-zinc-500 text-[11px] uppercase tracking-wider">
                       <BarChart3 className="w-3.5 h-3.5" />
                       Daily average
                     </div>
-                    <p className="mt-1 text-sm text-zinc-200">{dailyAverage.toLocaleString()} tokens/day</p>
+                    <p className="mt-1 text-sm text-zinc-800">{dailyAverage.toLocaleString()} tokens/day</p>
                     <p className="mt-1 text-xs text-zinc-500">Usage state: {usageState}</p>
                   </div>
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <div className="flex items-center gap-2 text-zinc-500 text-[11px] uppercase tracking-wider">
                       <Clock3 className="w-3.5 h-3.5" />
                       Remaining credits
                     </div>
-                    <p className="mt-1 text-sm text-zinc-200">{remainingClamped.toLocaleString()} tokens</p>
+                    <p className="mt-1 text-sm text-zinc-800">{remainingClamped.toLocaleString()} tokens</p>
                     <p className="mt-1 text-xs text-zinc-500">
                       Runway: {creditsRunwayDays === null ? "N/A" : `${creditsRunwayDays} days`}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-3">
+                  <div className="rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-3">
                     <div className="flex items-center gap-2 text-zinc-500 text-[11px] uppercase tracking-wider">
                       <FolderKanban className="w-3.5 h-3.5" />
                       Workspace context
                     </div>
-                    <p className="mt-1 text-sm text-zinc-200 truncate">{currentWorkspace?.slug || "personal"}</p>
+                    <p className="mt-1 text-sm text-zinc-800 truncate">{currentWorkspace?.slug || "personal"}</p>
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-4">
+                <div className="mt-4 rounded-xl border border-zinc-200 bg-[#f5f5f2]/50 p-4">
                   <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Builder health</p>
                   <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between text-zinc-300">
-                      <span className="inline-flex items-center gap-2 text-zinc-400"><CheckCircle2 className="w-4 h-4 text-emerald-400" />Completed projects</span>
+                    <div className="flex items-center justify-between text-zinc-700">
+                      <span className="inline-flex items-center gap-2 text-zinc-600"><CheckCircle2 className="w-4 h-4 text-emerald-400" />Completed projects</span>
                       <span>{analytics.complete}</span>
                     </div>
-                    <div className="flex items-center justify-between text-zinc-300">
-                      <span className="inline-flex items-center gap-2 text-zinc-400"><Activity className="w-4 h-4 text-blue-400" />Builds this week</span>
+                    <div className="flex items-center justify-between text-zinc-700">
+                      <span className="inline-flex items-center gap-2 text-zinc-600"><Activity className="w-4 h-4 text-blue-400" />Builds this week</span>
                       <span>{analytics.weekProjects}</span>
                     </div>
-                    <div className="flex items-center justify-between text-zinc-300">
-                      <span className="inline-flex items-center gap-2 text-zinc-400"><XCircle className="w-4 h-4 text-red-400" />Failed projects</span>
+                    <div className="flex items-center justify-between text-zinc-700">
+                      <span className="inline-flex items-center gap-2 text-zinc-600"><XCircle className="w-4 h-4 text-red-400" />Failed projects</span>
                       <span>{analytics.error}</span>
                     </div>
                   </div>
@@ -490,10 +485,11 @@ function SettingsContent() {
   )
 }
 
-export default function SettingsPage() {
+export default function AccountSettingsPage() {
   return (
     <ProtectedRoute requiredTokens={0}>
       <SettingsContent />
     </ProtectedRoute>
   )
 }
+

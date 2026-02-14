@@ -63,6 +63,7 @@ import { Input } from "@/components/ui/input"
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
 import { BuildTimeline, type TimelineStep } from "@/components/preview/build-timeline"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
 import {
@@ -78,6 +79,7 @@ import { applyPatch } from "diff"
 import type { GeneratedFile, Message, Project, ProjectVisibility } from "./types"
 import { extractAgentMessage } from "./utils"
 import { ProjectErrorBoundary, ChatMessage, CodePanel, ResponsivePreview, BrowserNavigator } from "@/components/project"
+import { WebsiteSettingsPanel } from "@/components/project/website-settings-panel"
 
 // Persists across Strict Mode remounts so only one sandbox run can update logs
 let sandboxRunIdCounter = 0
@@ -101,6 +103,9 @@ function ProjectContent() {
   const [previewPath, setPreviewPath] = useState("/")
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "tablet" | "phone">("desktop")
   const [previewReloadNonce, setPreviewReloadNonce] = useState(0)
+  const [ensuredPreviewUrl, setEnsuredPreviewUrl] = useState<string | null>(null)
+  const [isPreparingPreview, setIsPreparingPreview] = useState(false)
+  const [previewEnsureFailures, setPreviewEnsureFailures] = useState(0)
   const [copied, setCopied] = useState(false)
   const [isPreviewReady, setIsPreviewReady] = useState(false)
   const [currentGeneratingFile, setCurrentGeneratingFile] = useState<string | null>(null)
@@ -124,12 +129,16 @@ function ProjectContent() {
   const [buildTimer, setBuildTimer] = useState(0)
   const [logsTail, setLogsTail] = useState("")
   const [isFixing, setIsFixing] = useState(false)
+  const [fixingMessage, setFixingMessage] = useState<string | null>(null)
   const [isTimelineCollapsed, setIsTimelineCollapsed] = useState(false)
   const [previewRefreshHint, setPreviewRefreshHint] = useState<string | null>(null)
   const [editingTarget, setEditingTarget] = useState<{ kind: "prompt" } | { kind: "message"; index: number } | null>(null)
+  const [editingDraft, setEditingDraft] = useState("")
   const [mobileTab, setMobileTab] = useState<"chat" | "preview">("chat")
   const [visualEditActive, setVisualEditActive] = useState(false)
+  const [editingContextLabel, setEditingContextLabel] = useState<string | null>(null)
   const [deployOpen, setDeployOpen] = useState(false)
+  const [websiteSettingsOpen, setWebsiteSettingsOpen] = useState(false)
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
   const [selectedIntegration, setSelectedIntegration] = useState<"all" | "github" | "netlify" | "vercel" | "supabase" | "vars">("all")
   const [requiredEnvVars, setRequiredEnvVars] = useState<string[]>([])
@@ -158,11 +167,26 @@ function ProjectContent() {
   const [vercelDeployState, setVercelDeployState] = useState<string | null>(null)
   const [vercelLogUrl, setVercelLogUrl] = useState<string | null>(null)
   const [isVercelDeploying, setIsVercelDeploying] = useState(false)
+  const toFriendlyDeployError = useCallback((value: unknown) => {
+    const msg = String(value || "Publish failed").trim()
+    if (/CommandExitError|exit\s+status\s+1/i.test(msg)) {
+      return "Publishing couldn\u2019t complete because the website build failed. Please review your project content and try again."
+    }
+    return msg.replace(/^error:\s*/i, "")
+  }, [])
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
-  const [supabaseConnectOpen, setSupabaseConnectOpen] = useState(false)
-  const [supabaseFormUrl, setSupabaseFormUrl] = useState("")
-  const [supabaseFormAnonKey, setSupabaseFormAnonKey] = useState("")
+  const [supabaseOauthLoading, setSupabaseOauthLoading] = useState(false)
+  const [supabaseProjectsLoading, setSupabaseProjectsLoading] = useState(false)
+  const [supabaseProjectsError, setSupabaseProjectsError] = useState("")
+  const [supabaseCreatingProject, setSupabaseCreatingProject] = useState(false)
+  const [supabaseProjects, setSupabaseProjects] = useState<Array<{ id: string; name: string; ref: string; region: string; organizationId?: string }>>([])
+  const [supabaseOrganizations, setSupabaseOrganizations] = useState<Array<{ id: string; name?: string; slug?: string }>>([])
+  const [selectedSupabaseRef, setSelectedSupabaseRef] = useState("")
+  const [newSupabaseName, setNewSupabaseName] = useState("")
+  const [newSupabaseRegion, setNewSupabaseRegion] = useState("us-east-1")
+  const [newSupabaseDbPassword, setNewSupabaseDbPassword] = useState("")
+  const [supabaseCreateOpen, setSupabaseCreateOpen] = useState(false)
   const [supabaseInjecting, setSupabaseInjecting] = useState(false)
   const [suggestBackendDismissed, setSuggestBackendDismissed] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -175,6 +199,16 @@ function ProjectContent() {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [newWorkspaceName, setNewWorkspaceName] = useState("")
   const [creatingWorkspace, setCreatingWorkspace] = useState(false)
+  const SUPABASE_REGIONS = [
+    { value: "us-east-1", label: "US East (N. Virginia)" },
+    { value: "us-west-1", label: "US West (N. California)" },
+    { value: "eu-west-1", label: "West Europe (London)" },
+    { value: "eu-central-1", label: "EU Central (Frankfurt)" },
+    { value: "ap-southeast-1", label: "Southeast Asia (Singapore)" },
+    { value: "ap-northeast-1", label: "Northeast Asia (Tokyo)" },
+    { value: "ap-south-1", label: "South Asia (Mumbai)" },
+    { value: "sa-east-1", label: "South America (Sao Paulo)" },
+  ] as const
   const isLg = useIsLg()
   const lastAutoPreviewSignatureRef = useRef<string | null>(null)
   /** Prevents double generation when status is "pending" (e.g. Strict Mode remount resets isGenerating) */
@@ -192,7 +226,7 @@ function ProjectContent() {
   }, [isSandboxLoading])
 
   const hasSuccessfulPreview =
-    project?.status === "complete" && !!project?.sandboxUrl && !buildError
+    project?.status === "complete" && !!ensuredPreviewUrl && !buildError
 
   // When preview is ready (all build steps success), hide the overlay so users see the preview
   const allBuildSuccess =
@@ -200,10 +234,10 @@ function ProjectContent() {
 
   // When preview becomes ready (all steps success), collapse timeline so the overlay doesn't block the preview
   useEffect(() => {
-    if (project?.sandboxUrl && allBuildSuccess) {
+    if (ensuredPreviewUrl && allBuildSuccess) {
       setIsTimelineCollapsed(true)
     }
-  }, [project?.sandboxUrl, allBuildSuccess])
+  }, [ensuredPreviewUrl, allBuildSuccess])
 
   const runSteps = reasoningSteps.length > 0
     ? reasoningSteps
@@ -219,6 +253,31 @@ function ProjectContent() {
     const token = await user.getIdToken()
     return { Authorization: `Bearer ${token}` }
   }, [user])
+
+  const ensurePreviewEnvironment = useCallback(async (force = false) => {
+    if (!projectId || !user) return null
+    try {
+      setIsPreparingPreview(true)
+      const authHeader = await getAuthHeader()
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/ensure-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ force }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.previewUrl) {
+        throw new Error(json?.error || "Failed to prepare preview")
+      }
+      setEnsuredPreviewUrl(String(json.previewUrl))
+      setPreviewEnsureFailures(0)
+      return String(json.previewUrl)
+    } catch (e) {
+      setPreviewEnsureFailures((prev) => prev + 1)
+      throw e
+    } finally {
+      setIsPreparingPreview(false)
+    }
+  }, [getAuthHeader, projectId, user])
 
   // Cleanup on unmount: abort any in-flight generation or sandbox streams to prevent memory leaks
   useEffect(() => {
@@ -269,6 +328,7 @@ function ProjectContent() {
     setIntegrationsOpen(true)
     refreshGitHubStatus()
     refreshNetlifyStatus()
+    refreshSupabaseProjects()
   }
 
   const refreshGitHubStatus = useCallback(async () => {
@@ -328,27 +388,113 @@ function ProjectContent() {
 
   const supabaseConnected = !!project?.supabaseUrl
 
-  const handleConnectSupabase = useCallback(
-    async (url: string, anonKey: string, serviceRoleKey?: string) => {
-      if (!projectId) return
-      try {
-        const authHeader = await getAuthHeader()
-        const res = await fetch("/api/supabase/connect", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeader },
-          body: JSON.stringify({ projectId, url, anonKey, serviceRoleKey: serviceRoleKey || undefined }),
-        })
-        const json = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(json?.error || "Connect failed")
-        setSupabaseConnectOpen(false)
-        // Project will update via Firestore listener
-      } catch (e) {
-        console.error("Supabase connect failed", e)
-        throw e
+  const refreshSupabaseProjects = useCallback(async () => {
+    try {
+      setSupabaseProjectsLoading(true)
+      setSupabaseProjectsError("")
+      const authHeader = await getAuthHeader()
+      const res = await fetch("/api/supabase/projects", { headers: authHeader })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setSupabaseProjects([])
+        setSupabaseOrganizations([])
+        setSelectedSupabaseRef("")
+        const errorMessage = (json?.error ?? "").toString()
+        const isNotConnected =
+          res.status === 404 &&
+          errorMessage.toLowerCase().includes("supabase is not connected")
+        if (json?.error && !isNotConnected) {
+          console.error("Supabase projects fetch failed:", json.error)
+        }
+        return
       }
-    },
-    [getAuthHeader, projectId]
-  )
+      if (json?.connected === false) {
+        setSupabaseProjects([])
+        setSupabaseOrganizations([])
+        setSelectedSupabaseRef("")
+        setSupabaseProjectsError((json?.error ?? "Supabase is not connected for this account.").toString())
+        return
+      }
+      const projects = Array.isArray(json?.projects) ? json.projects : []
+      const organizations = Array.isArray(json?.organizations) ? json.organizations : []
+      setSupabaseProjects(projects)
+      setSupabaseOrganizations(organizations)
+      if (!selectedSupabaseRef && projects[0]?.ref) {
+        setSelectedSupabaseRef(projects[0].ref)
+      }
+    } catch {
+      setSupabaseProjects([])
+      setSupabaseOrganizations([])
+      setSupabaseProjectsError("Failed to load Supabase organizations/projects. Try reconnecting Supabase.")
+    } finally {
+      setSupabaseProjectsLoading(false)
+    }
+  }, [getAuthHeader, selectedSupabaseRef])
+
+  const handleStartSupabaseOauth = useCallback(async () => {
+    if (!projectId) return
+    try {
+      setSupabaseOauthLoading(true)
+      const authHeader = await getAuthHeader()
+      const res = await fetch(`/api/integrations/supabase/authorize?builderProjectId=${encodeURIComponent(projectId)}`, {
+        headers: authHeader,
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.url) throw new Error(json?.error || "Failed to start Supabase OAuth")
+      window.open(json.url, "supabase-oauth", "width=560,height=760,menubar=no,toolbar=no")
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to connect Supabase")
+    } finally {
+      setSupabaseOauthLoading(false)
+    }
+  }, [getAuthHeader, projectId])
+
+  const handleCreateSupabaseProject = useCallback(async () => {
+    if (!newSupabaseName.trim() || !newSupabaseRegion.trim() || !newSupabaseDbPassword.trim()) {
+      alert("Enter project name, region, and DB password.")
+      return
+    }
+    try {
+      setSupabaseCreatingProject(true)
+      const authHeader = await getAuthHeader()
+      const res = await fetch("/api/integrations/supabase/create-project", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({
+          name: newSupabaseName.trim(),
+          region: newSupabaseRegion.trim(),
+          dbPassword: newSupabaseDbPassword.trim(),
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.error || "Failed to create Supabase project")
+      await refreshSupabaseProjects()
+      const createdRef = (json?.project?.id ?? "").toString()
+      if (createdRef) setSelectedSupabaseRef(createdRef)
+      setNewSupabaseDbPassword("")
+      setSupabaseCreateOpen(false)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to create project")
+    } finally {
+      setSupabaseCreatingProject(false)
+    }
+  }, [getAuthHeader, newSupabaseDbPassword, newSupabaseName, newSupabaseRegion, refreshSupabaseProjects])
+
+  const handleLinkSupabaseProject = useCallback(async () => {
+    if (!projectId || !selectedSupabaseRef) return
+    try {
+      const authHeader = await getAuthHeader()
+      const res = await fetch("/api/integrations/supabase/link-project", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ builderProjectId: projectId, supabaseProjectRef: selectedSupabaseRef }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.error || "Failed to link Supabase project")
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to link project")
+    }
+  }, [getAuthHeader, projectId, selectedSupabaseRef])
 
   const handleInjectSupabase = useCallback(async () => {
     if (!projectId) return
@@ -372,6 +518,27 @@ function ProjectContent() {
       setSupabaseInjecting(false)
     }
   }, [getAuthHeader, projectId])
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as { type?: string; ok?: boolean; message?: string }
+      if (data?.type !== "supabase-oauth") return
+      if (!data.ok) {
+        alert(data.message || "Supabase OAuth failed")
+        return
+      }
+      refreshSupabaseProjects()
+    }
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [refreshSupabaseProjects])
+
+  useEffect(() => {
+    if (supabaseCreateOpen && supabaseOrganizations.length === 0) {
+      refreshSupabaseProjects()
+    }
+  }, [refreshSupabaseProjects, supabaseCreateOpen, supabaseOrganizations.length])
 
   const projectUrl = typeof window !== "undefined" ? `${window.location.origin}/project/${projectId}` : ""
   const canEdit = !!user && !!project && (!project.ownerId || project.ownerId === user.uid || (Array.isArray(project.editorIds) && project.editorIds.includes(user.uid)))
@@ -473,7 +640,6 @@ function ProjectContent() {
     if (!projectId) return
     setIsDeploying(true)
     setDeployError(null)
-    setDeployLinks(null)
     setDeployLogs([])
     setDeployStep("Starting")
 
@@ -525,14 +691,16 @@ function ProjectContent() {
           }
 
           if (payload.type === "log") {
+            const nextLine = String(payload.message || "")
+            if (/CommandExitError|exit\s+status\s+1/i.test(nextLine)) continue
             setDeployLogs((prev) => {
-              const next = [...prev, String(payload.message || "")]
+              const next = [...prev, nextLine]
               return next.length > 500 ? next.slice(next.length - 500) : next
             })
           }
 
           if (payload.type === "error") {
-            setDeployError(String(payload.error || "Deploy failed"))
+            setDeployError(toFriendlyDeployError(payload.error))
           }
 
           if (payload.type === "success") {
@@ -550,12 +718,12 @@ function ProjectContent() {
         }
       }
     } catch (err: any) {
-      setDeployError(err?.message || "Deploy failed")
+      setDeployError(toFriendlyDeployError(err?.message || "Publish failed"))
     } finally {
       setIsDeploying(false)
       refreshNetlifyStatus()
     }
-  }, [deployLinks?.siteId, getAuthHeader, netlifySiteName, project?.name, projectId, refreshNetlifyStatus])
+  }, [deployLinks?.siteId, getAuthHeader, netlifySiteName, project?.name, projectId, refreshNetlifyStatus, toFriendlyDeployError])
 
   const handleSaveVercelToken = useCallback(async () => {
     if (!projectId || !vercelTokenInput.trim()) return
@@ -580,7 +748,6 @@ function ProjectContent() {
     if (!projectId) return
     setIsVercelDeploying(true)
     setVercelDeployError(null)
-    setVercelDeployLinks(null)
     setVercelDeployLogs([])
     setVercelDeployStep("Starting")
 
@@ -628,14 +795,16 @@ function ProjectContent() {
           }
 
           if (payload.type === "log") {
+            const nextLine = String(payload.message || "")
+            if (/CommandExitError|exit\s+status\s+1/i.test(nextLine)) continue
             setVercelDeployLogs((prev) => {
-              const next = [...prev, String(payload.message || "")]
+              const next = [...prev, nextLine]
               return next.length > 500 ? next.slice(next.length - 500) : next
             })
           }
 
           if (payload.type === "error") {
-            setVercelDeployError(String(payload.error || "Deploy failed"))
+            setVercelDeployError(toFriendlyDeployError(payload.error))
           }
 
           if (payload.type === "success") {
@@ -652,12 +821,12 @@ function ProjectContent() {
         }
       }
     } catch (err: any) {
-      setVercelDeployError(err?.message || "Deploy failed")
+      setVercelDeployError(toFriendlyDeployError(err?.message || "Publish failed"))
     } finally {
       setIsVercelDeploying(false)
       refreshVercelStatus()
     }
-  }, [getAuthHeader, projectId, refreshVercelStatus])
+  }, [getAuthHeader, projectId, refreshVercelStatus, toFriendlyDeployError])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -672,6 +841,28 @@ function ProjectContent() {
     refreshNetlifyStatus()
     refreshVercelStatus()
   }, [deployOpen, refreshNetlifyStatus, refreshVercelStatus])
+
+  useEffect(() => {
+    if (!project) return
+    const p = project as any
+    if (!deployLinks && (p?.netlifySiteUrl || p?.netlifyDeployUrl || p?.netlifyAdminUrl || p?.netlifySiteId || p?.netlifyDeployId)) {
+      setDeployLinks({
+        siteUrl: p?.netlifySiteUrl || null,
+        deployUrl: p?.netlifyDeployUrl || null,
+        adminUrl: p?.netlifyAdminUrl || null,
+        siteId: p?.netlifySiteId || null,
+        deployId: p?.netlifyDeployId || null,
+      })
+    }
+    if (!vercelDeployLinks && (p?.vercelDeployUrl || p?.vercelDeploymentId)) {
+      setVercelDeployLinks({
+        siteUrl: p?.vercelDeployUrl || null,
+        deployUrl: p?.vercelDeployUrl || null,
+        adminUrl: p?.vercelDeploymentId ? `https://vercel.com/dashboard/deployments/${p.vercelDeploymentId}` : null,
+        deploymentId: p?.vercelDeploymentId || null,
+      })
+    }
+  }, [project, deployLinks, vercelDeployLinks])
 
   useEffect(() => {
     refreshGitHubStatus()
@@ -851,6 +1042,7 @@ function ProjectContent() {
     }
     
     setEditingTarget(null)
+    setEditingDraft("")
     
     // Regenerate with new prompt
     const fullPrompt = newContent
@@ -859,11 +1051,12 @@ function ProjectContent() {
 
   const handleCancelEdit = () => {
     setEditingTarget(null)
+    setEditingDraft("")
   }
 
   const getPreviewUrl = useCallback(() => {
-    if (!project?.sandboxUrl) return null
-    const base = project.sandboxUrl.replace(/\/$/, "")
+    if (!ensuredPreviewUrl) return null
+    const base = ensuredPreviewUrl.replace(/\/$/, "")
     // Validate previewPath to prevent XSS (only allow safe URL path characters)
     const safePath = /^[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]*$/.test(previewPath) && previewPath.startsWith("/")
       ? previewPath
@@ -871,21 +1064,26 @@ function ProjectContent() {
     const url = `${base}${safePath}`
     const sep = url.includes("?") ? "&" : "?"
     return `${url}${sep}__reload=${previewReloadNonce}`
-  }, [project?.sandboxUrl, previewPath, previewReloadNonce])
+  }, [ensuredPreviewUrl, previewPath, previewReloadNonce])
 
   const handlePreviewNavigate = useCallback((nextPath: string) => {
     const normalized = nextPath.startsWith("/") ? nextPath : `/${nextPath}`
     setPreviewPath(normalized)
   }, [])
 
-  const handlePreviewReload = useCallback(() => {
-    setPreviewReloadNonce(Date.now())
-    setPreviewKey((k) => k + 1)
-  }, [])
+  const handlePreviewReload = useCallback(async () => {
+    try {
+      await ensurePreviewEnvironment(true)
+      setPreviewReloadNonce(Date.now())
+      setPreviewKey((k) => k + 1)
+    } catch {
+      // friendly loading/error handling is shown in preview panel
+    }
+  }, [ensurePreviewEnvironment])
 
-  // Update build steps when project sandbox URL changes
+  // Update build steps when preview URL is ready
   useEffect(() => {
-    if (project?.sandboxUrl && project.status === "complete") {
+    if (ensuredPreviewUrl && project?.status === "complete") {
       setBuildSteps([
         { key: "write", label: "Writing files", status: "success", startedAt: Date.now() - 3000, finishedAt: Date.now() - 2500 },
         { key: "install", label: "Installing dependencies", status: "success", startedAt: Date.now() - 2500, finishedAt: Date.now() - 1500 },
@@ -894,16 +1092,15 @@ function ProjectContent() {
       setIsSandboxLoading(false)
       setBuildError(null)
     }
-  }, [project?.sandboxUrl, project?.status])
+  }, [ensuredPreviewUrl, project?.status])
 
   // Auto-retry iframe load at 5s and 15s when preview URL is set (tunnel/server may not be ready on first load)
   const previewRetryCountRef = useRef<number>(0)
   useEffect(() => {
-    if (!project?.sandboxUrl) {
+    if (!ensuredPreviewUrl) {
       previewRetryCountRef.current = 0
       return
     }
-    const url = project.sandboxUrl
     const t1 = setTimeout(() => {
       if (previewRetryCountRef.current < 1) {
         previewRetryCountRef.current = 1
@@ -917,7 +1114,7 @@ function ProjectContent() {
       }
     }, 15000)
     return () => { clearTimeout(t1); clearTimeout(t2) }
-  }, [project?.sandboxUrl])
+  }, [ensuredPreviewUrl])
 
   useEffect(() => {
     if (!isSandboxLoading) return
@@ -1415,7 +1612,6 @@ function ProjectContent() {
         body: JSON.stringify({ 
           files, 
           projectId, 
-          sandboxId: forceNewSandbox ? undefined : (project.sandboxId ?? undefined),
         }),
         signal,
       })
@@ -1462,10 +1658,20 @@ function ProjectContent() {
           
           terminalEventSeen = true
           clearClientTimeout()
+          setIsTimelineCollapsed(false)
           setBuildError(errMsg)
           setBuildFailureCategory(data.failureCategory ?? "unknown")
           setBuildFailureReason(data.failureReason ?? null)
           setBuildLogs((prev) => ({ ...prev, ...(data.logs || {}) }))
+          updateDoc(projectRef, {
+            lastPreviewError: {
+              message: errMsg,
+              failureCategory: data.failureCategory ?? "unknown",
+              failureReason: data.failureReason ?? null,
+              logs: data.logs || null,
+              createdAt: serverTimestamp(),
+            },
+          }).catch(() => {})
           setBuildSteps((prev) =>
             prev.map((step) =>
               step.key === (data.failureCategory === "deps" ? "install" : "dev")
@@ -1480,12 +1686,12 @@ function ProjectContent() {
           clearClientTimeout()
           
           const url = data.url
-          const newSandboxId = data.sandboxId
           
           // Update Firestore
-          updateDoc(projectRef, { sandboxUrl: url, sandboxId: newSandboxId }).catch(console.error)
+          updateDoc(projectRef, { sandboxUrl: url }).catch(console.error)
           
-          setProject((prev) => (prev ? { ...prev, sandboxUrl: url, sandboxId: newSandboxId } : prev))
+          setProject((prev) => (prev ? { ...prev, sandboxUrl: url } : prev))
+          setEnsuredPreviewUrl(url)
           
           if (data.warning) {
             setPreviewRefreshHint(data.warning)
@@ -1500,6 +1706,9 @@ function ProjectContent() {
             }))
           )
           setIsSandboxLoading(false)
+          setIsTimelineCollapsed(true)
+          setBuildError(null)
+          updateDoc(projectRef, { lastPreviewError: deleteField() }).catch(() => {})
           setActiveTab("preview")
         } else if (data.type === "ping") {
           // Heartbeat, ignore
@@ -1573,6 +1782,16 @@ function ProjectContent() {
       setBuildError(error instanceof Error ? error.message : "Failed to create preview")
       setBuildFailureCategory("unknown")
       setBuildFailureReason("Sandbox error")
+      setIsTimelineCollapsed(false)
+      updateDoc(projectRef, {
+        lastPreviewError: {
+          message: error instanceof Error ? error.message : "Failed to create preview",
+          failureCategory: "unknown",
+          failureReason: "Sandbox error",
+          logs: null,
+          createdAt: serverTimestamp(),
+        },
+      }).catch(() => {})
       setBuildSteps([
         { key: "write", label: "Writing files", status: "success", startedAt: now - 3000, finishedAt: now - 2000 },
         { key: "install", label: "Installing dependencies", status: "failed", startedAt: now - 2000, finishedAt: now - 1000 },
@@ -1601,36 +1820,61 @@ function ProjectContent() {
     if (!project || !canEdit || isFixing || isGenerating || !buildError) return
     setIsFixing(true)
     try {
-      const parts = [
-        "Fix the following build or runtime error in my project. Apply minimal, targeted changes to resolve it. Output only the changed files (use unified diff or full file content).",
-        "",
-        "Error: " + buildError,
-        ...(buildFailureReason ? ["Failure reason: " + buildFailureReason] : []),
-        ...(buildFailureCategory ? ["Category: " + buildFailureCategory] : []),
-        "",
-        "Relevant logs:",
-        ...(buildLogs?.install ? ["[install]\n" + (buildLogs.install.slice(-2000))] : []),
-        ...(buildLogs?.dev ? ["[dev]\n" + (buildLogs.dev.slice(-2000))] : []),
-      ]
-      const fixPrompt = parts.join("\n")
-      await generateCode(fixPrompt, project.model)
+      setFixingMessage("Analyzing and repairing...")
+      const authHeader = await getAuthHeader()
+      const res = await fetch("/api/error/fix", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeader,
+        },
+        body: JSON.stringify({
+          projectId,
+          error: buildError,
+          failureCategory: buildFailureCategory,
+          failureReason: buildFailureReason,
+          logsTail: logsTail?.slice(-12000) || [buildLogs?.install, buildLogs?.dev].filter(Boolean).join("\n\n").slice(-12000),
+        }),
+      })
+
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || "Automatic repair could not complete.")
+      }
+
+      setFixingMessage("Applying repair and restarting preview...")
+      if (Array.isArray(json?.files) && json.files.length > 0) {
+        await createSandbox(json.files, { forceNewSandbox: true })
+      } else if (project.files?.length) {
+        await createSandbox(project.files, { forceNewSandbox: true })
+      }
+      setBuildError(null)
+      setBuildFailureReason(null)
+      setBuildFailureCategory(undefined)
+      toast({
+        title: "Fix applied",
+        description: String(json?.explanation || "The issue was repaired and your preview is restarting."),
+      })
     } finally {
+      setFixingMessage(null)
       setIsFixing(false)
     }
-  }, [project, canEdit, isFixing, isGenerating, buildError, buildFailureReason, buildFailureCategory, buildLogs, generateCode])
+  }, [project, canEdit, isFixing, isGenerating, buildError, buildFailureReason, buildFailureCategory, logsTail, buildLogs, getAuthHeader, projectId, createSandbox, toast])
 
   // Clear module-level preview key when switching projects so the new project can auto-preview
   useEffect(() => {
     lastAutoPreviewKey = null
+    setEnsuredPreviewUrl(null)
+    setPreviewEnsureFailures(0)
   }, [projectId])
 
-  // FIXED: Added createSandbox to dependency array
+  // Ensure preview runtime exists and recover silently if expired/missing
   useEffect(() => {
     if (!project) return
-    if (project.sandboxUrl) return
     if (!project.files || project.files.length === 0) return
     if (project.status !== "complete") return
-    if (isSandboxLoading || isGenerating) return
+    if (isSandboxLoading || isGenerating || isPreparingPreview) return
+    if (ensuredPreviewUrl) return
 
     const signature = `${project.id}:${project.files.length}:${project.files[0]?.path || ""}:${project.files[project.files.length - 1]?.path || ""}`
     const key = `${projectId}:${signature}`
@@ -1638,9 +1882,10 @@ function ProjectContent() {
     lastAutoPreviewKey = key
     lastAutoPreviewSignatureRef.current = signature
 
-    console.log("[AutoPreview] Triggering createSandbox")
-    createSandbox(project.files)
-  }, [project, projectId, isSandboxLoading, isGenerating, createSandbox])
+    ensurePreviewEnvironment(false).catch(() => {
+      // only surface after repeated failures
+    })
+  }, [project, projectId, isSandboxLoading, isGenerating, isPreparingPreview, ensuredPreviewUrl, ensurePreviewEnvironment])
 
   const handleSendMessage = async (submittedValue?: string, submittedModel?: string) => {
     const nextMessage = (submittedValue ?? chatInput).trim()
@@ -1754,8 +1999,29 @@ function ProjectContent() {
     }
   }
 
+  const describeEditingContext = useCallback((raw: string | null | undefined) => {
+    if (!raw) return null
+    const base = raw.replace(/selected element/i, "").trim() || raw.trim()
+    const cleaned = base.replace(/^["']|["']$/g, "")
+    const short = cleaned.split(".")[0]?.trim() || cleaned
+    return short ? `Editing ${short}` : null
+  }, [])
+
+  const quickActionChips = [
+    "Improve headline",
+    "Add pricing section",
+    "Make it more premium",
+    "Add testimonials",
+    "Optimise for mobile",
+  ]
+
+  const contextualChips = editingContextLabel
+    ? quickActionChips.map((chip) => `${chip} in this section`)
+    : quickActionChips
+
   // Combine project files with generating files
   const displayFiles = isGenerating ? generatingFiles : (project?.files || [])
+  const resolvedPreviewUrl = getPreviewUrl()
   
   // Prefer explicit project name; fall back to prompt-derived title
   const displayProjectName = project?.name || project?.prompt?.split(' ').slice(0, 3).join(' ') || 'Untitled Project'
@@ -1766,10 +2032,10 @@ function ProjectContent() {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center">
-            <Loader2 className="w-5 h-5 text-zinc-400 animate-spin" />
+          <div className="w-10 h-10 rounded-full border border-zinc-200 bg-white flex items-center justify-center">
+            <Loader2 className="w-5 h-5 text-zinc-600 animate-spin" />
           </div>
           <TextShimmer className="text-sm">{authLoading ? "Loading…" : "Loading project..."}</TextShimmer>
         </div>
@@ -1779,15 +2045,15 @@ function ProjectContent() {
 
   if (accessError === "private") {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        <div className="text-center max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-8">
-          <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mx-auto mb-4">
-            <Share className="w-6 h-6 text-zinc-400" />
+      <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center p-4">
+        <div className="text-center max-w-md rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+          <div className="w-12 h-12 rounded-full border border-zinc-200 bg-zinc-100 flex items-center justify-center mx-auto mb-4">
+            <Share className="w-6 h-6 text-zinc-600" />
           </div>
-          <h1 className="text-xl font-semibold text-zinc-100 mb-2">This project is private</h1>
+          <h1 className="text-xl font-semibold text-zinc-900 mb-2">This project is private</h1>
           <p className="text-zinc-500 text-sm mb-6">Sign in to request access or open your own project.</p>
           <Link href={`/login?redirect=${encodeURIComponent(`/project/${projectId}`)}`}>
-            <Button className="bg-zinc-100 text-zinc-900 hover:bg-white border-0">Sign in</Button>
+            <Button className="bg-zinc-900 text-white hover:bg-black border-0">Sign in</Button>
           </Link>
         </div>
       </div>
@@ -1796,12 +2062,12 @@ function ProjectContent() {
 
   if (accessError === "forbidden") {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        <div className="text-center max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-8">
-          <h1 className="text-xl font-semibold text-zinc-100 mb-2">You don&apos;t have access</h1>
+      <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center p-4">
+        <div className="text-center max-w-md rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+          <h1 className="text-xl font-semibold text-zinc-900 mb-2">You don&apos;t have access</h1>
           <p className="text-zinc-500 text-sm mb-6">This project is private and you aren&apos;t an owner or editor.</p>
           <Link href="/">
-            <Button variant="outline" className="border-zinc-700 text-zinc-300">Back home</Button>
+            <Button variant="outline" className="border-zinc-300 text-zinc-700 hover:bg-zinc-100">Back home</Button>
           </Link>
         </div>
       </div>
@@ -1810,12 +2076,12 @@ function ProjectContent() {
 
   if (!project) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-screen bg-[#f5f5f2] flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-zinc-100 mb-2">Project not found</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 mb-2">Project not found</h1>
           <p className="text-zinc-500 mb-6">This project doesn&apos;t exist or has been deleted.</p>
           <Link href="/">
-            <Button variant="outline" className="border-zinc-800 text-zinc-300 hover:bg-zinc-800 bg-transparent">
+            <Button variant="outline" className="border-zinc-300 text-zinc-700 hover:bg-zinc-100 bg-transparent">
               Back to Home
             </Button>
           </Link>
@@ -1825,2025 +2091,172 @@ function ProjectContent() {
   }
 
   return (
-    <div className="relative h-screen w-screen max-w-full min-w-0 overflow-hidden bg-zinc-950 flex flex-col touch-pan-y overscroll-none">
-      {/* Subtle ambient background, shared with marketing pages */}
-      <div className="pointer-events-none fixed inset-0 -z-20 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(245,158,11,0.10),transparent)]" />
-      <div className="pointer-events-none fixed inset-0 -z-30 bg-[linear-gradient(to_bottom,rgba(9,9,11,0.98),rgb(9,9,11))]" />
-      {/* Top Header Bar - modern glass bar */}
-      <div
-        className="h-auto lg:h-14 flex items-center justify-between px-3 sm:px-4 lg:px-6 pt-3 pb-2 lg:py-0 border-b border-zinc-800/80 bg-zinc-900/95 backdrop-blur-xl flex-shrink-0 gap-3 min-w-0 shadow-[0_1px_0_0_rgba(255,255,255,0.03)]"
-        style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 0.75rem)" }}
-      >
-        {/* Mobile: Burger menu - touch-friendly */}
-        <div className="lg:hidden flex items-center min-w-[44px] min-h-[44px] -ml-2 items-center justify-center">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="h-11 w-11 inline-flex items-center justify-center rounded-xl border border-zinc-800/70 bg-zinc-950/40 text-zinc-200 shadow-sm shadow-black/20 ring-1 ring-white/5 hover:text-zinc-50 hover:bg-zinc-900/70 hover:border-zinc-700/80 transition-all duration-200 active:scale-[0.97]"
-                aria-label="Open menu"
-              >
-                <Menu className="h-5 w-5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[min(calc(100vw-1.5rem),20rem)] max-w-80 bg-zinc-950/98 border border-zinc-800/80 shadow-2xl rounded-2xl p-1.5 ring-1 ring-white/10 backdrop-blur-xl">
-              <DropdownMenuItem asChild className="px-3 py-2.5">
-                <Link href="/projects" className="flex items-center gap-2.5 cursor-pointer w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <ArrowLeft className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Back to Studio</span>
-                </Link>
-              </DropdownMenuItem>
-
-              <DropdownMenuSeparator className="bg-zinc-800 my-1" />
-
-              <div className="px-3 py-2">
-                <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">Actions</div>
-
-                <DropdownMenuItem
-                  onSelect={(e) => { e.preventDefault(); handleOpenIntegrations(); }}
-                  className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-zinc-800/70 cursor-pointer focus:bg-zinc-800/70 outline-none"
-                >
-                  <Plug className="w-4 h-4 text-zinc-300 shrink-0" />
-                  <span className="text-sm text-zinc-100">Integrations</span>
-                </DropdownMenuItem>
-
-                <div className="pt-2">
-                  <button onClick={() => setDeployOpen(true)} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-zinc-800/70 transition-colors text-left">
-                    <Rocket className="w-4 h-4 text-zinc-400" />
-                    <span className="text-sm font-semibold text-zinc-100">Deploy</span>
-                  </button>
-                </div>
-                <div className="pt-2">
-                  {githubConnected === false ? (
-                    <button onClick={handleConnectGitHub} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-zinc-800/70 transition-colors text-left">
-                      <Github className="w-4 h-4 text-zinc-400" />
-                      <span className="text-sm font-semibold text-zinc-100">Connect GitHub</span>
-                    </button>
-                  ) : githubConnected === true && project?.files?.length ? (
-                    <>
-                      {project.githubRepoUrl ? (
-                        <>
-                          <a href={project.githubRepoUrl} target="_blank" rel="noreferrer" className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-zinc-800/70 transition-colors text-left">
-                            <Github className="w-4 h-4 text-zinc-400" />
-                            <span className="text-sm text-zinc-100 truncate flex-1">View repo</span>
-                            <ExternalLink className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                          </a>
-                          <button onClick={handleSyncToGitHub} disabled={isSyncing} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-zinc-800/70 transition-colors text-left disabled:opacity-50">
-                            {isSyncing ? <Loader2 className="w-4 h-4 animate-spin text-zinc-400" /> : <RefreshCw className="w-4 h-4 text-zinc-400" />}
-                            <span className="text-sm text-zinc-100">Re-sync to GitHub</span>
-                          </button>
-                        </>
-                      ) : (
-                        <button onClick={handleSyncToGitHub} disabled={isSyncing} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-zinc-800/70 transition-colors text-left disabled:opacity-50">
-                          {isSyncing ? <Loader2 className="w-4 h-4 animate-spin text-zinc-400" /> : <Github className="w-4 h-4 text-zinc-400" />}
-                          <span className="text-sm text-zinc-100">{isSyncing ? "Syncing…" : "Sync to GitHub"}</span>
-                        </button>
-                      )}
-                    </>
-                  ) : null}
-                </div>
-              </div>
-
-              <DropdownMenuSeparator className="bg-zinc-800 my-1" />
-
-              <DropdownMenuLabel className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1 px-3">
-                Project
-              </DropdownMenuLabel>
-
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={() => { setRenameValue(project?.name || ''); setRenameOpen(true); }}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Edit2 className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Rename Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={duplicateProject}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Copy className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Duplicate Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer">
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <FileText className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Remix Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={downloadProject}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Download className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Export Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              <DropdownMenuSeparator className="bg-zinc-800 my-1" />
-
-              <DropdownMenuItem asChild className="px-3 py-2.5">
-                <Link href="/settings" className="flex items-center gap-2.5 cursor-pointer w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Settings className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Settings</span>
-                </Link>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem asChild className="px-3 py-2.5">
-                <Link href="/help" className="flex items-center gap-2.5 cursor-pointer w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <HelpCircle className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Help & Support</span>
-                </Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Rename Project Modal */}
-        <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),24rem)]">
-            <DialogHeader>
-              <DialogTitle>Rename Project</DialogTitle>
-              <DialogDescription>Set a new name for this project.</DialogDescription>
-            </DialogHeader>
-            <div className="mt-4">
-              <input
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100"
-                placeholder="New project name"
-              />
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setRenameOpen(false)}>Cancel</Button>
-              <Button onClick={handleSaveRename}>Save</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Title (center on mobile, dropdown on desktop) */}
-        <div className="flex-1 flex justify-center lg:justify-start min-w-0 px-1">
-          <div className="lg:hidden text-sm font-semibold text-zinc-100 truncate text-center max-w-[55vw] sm:max-w-[60vw]">
-            {displayProjectName}
-          </div>
-
-          {/* Desktop: Logo, Separator, Title with Dropdown */}
-          <div className="hidden lg:flex items-center gap-3 min-w-0">
-            <Link href="/" className="font-display text-base font-semibold text-zinc-100 hover:text-zinc-200 transition-colors flex-shrink-0">
-              BuildKit
+    <div className="min-h-screen bg-[#f5f5f2] text-[#1f1f1f]">
+      <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col px-3 py-3 sm:px-5 sm:py-4 lg:h-screen lg:px-6">
+        <header className="mb-3 flex flex-col gap-3 border-b border-zinc-200 bg-[#f5f5f2] px-1 pb-3 sm:mb-4 sm:flex-row sm:items-center sm:justify-between sm:pb-4 lg:h-14 lg:flex-row lg:items-center lg:pb-0">
+          <div className="flex min-w-0 items-center gap-4">
+            <Link href="/projects" className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500 transition-colors hover:text-zinc-800">
+              Studio
             </Link>
-            <div className="h-4 w-px bg-zinc-700" />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-1.5 text-sm font-medium text-zinc-100 hover:text-zinc-200 transition-colors px-2 py-1 rounded-md hover:bg-zinc-800/50 min-w-0">
-                  <span className="truncate lg:max-w-none">{displayProjectName}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-72 bg-zinc-900 border-zinc-800 shadow-xl">
-              {/* Back to Studio */}
-              <DropdownMenuItem asChild className="px-3 py-2.5">
-                <Link href="/projects" className="flex items-center gap-2.5 cursor-pointer w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <ArrowLeft className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Back to Studio</span>
-                </Link>
-              </DropdownMenuItem>
-
-              <DropdownMenuSeparator className="bg-zinc-800 my-1" />
-
-              {/* Plan Section */}
-              <div className="px-3 py-3">
-                <DropdownMenuLabel className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3 px-0">
-                  Plan & Usage
-                </DropdownMenuLabel>
-
-                {/* Plan Card (dynamic from Firestore userData) */}
-                <div className="rounded-lg border border-zinc-700/50 bg-zinc-950 p-4 space-y-3 shadow-lg">
-                  {/* Plan Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-zinc-800/80 border border-zinc-700/50">
-                        <Zap className="w-4 h-4 text-zinc-200" />
-                      </div>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-sm font-bold text-zinc-50 capitalize leading-tight">
-                          {userData?.planName || (userData?.planId ?? 'Free')}
-                        </span>
-                        <span className="text-xs text-zinc-400 font-medium">
-                          {userData ? `${userData.tokenUsage.used.toLocaleString()} / ${tokensLimit.toLocaleString()} tokens` : '—'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Progress Bar Section */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-zinc-300">Token Usage</span>
-                      <span className="text-xs font-bold text-zinc-100">
-                        {userData && tokensLimit > 0 ? `${Math.round(((userData.tokenUsage.used) / tokensLimit) * 100)}%` : ''}
-                      </span>
-                    </div>
-                    <div className="h-2 w-full bg-zinc-800/80 rounded-full overflow-hidden border border-zinc-700/30">
-                      <div
-                        className="h-full rounded-full transition-all duration-300 shadow-sm bg-gradient-to-r from-amber-400 to-yellow-500"
-                        style={{ width: userData && tokensLimit > 0 ? `${Math.min(100, Math.round((userData.tokenUsage.used / tokensLimit) * 100))}%` : '0%' }}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                      <span>Used: {userData ? userData.tokenUsage.used.toLocaleString() : '—'}</span>
-                      <span>Remaining: {userData ? Math.max(0, userData.tokenUsage.remaining ?? 0).toLocaleString() : '—'}</span>
-                    </div>
-                  </div>
-
-                  {/* Upgrade Button */}
-                  <Link
-                    href="/pricing"
-                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg bg-gradient-to-r from-zinc-800 to-zinc-800/90 border border-zinc-700/50 hover:from-zinc-700 hover:to-zinc-700/90 hover:border-zinc-600/50 transition-all group shadow-sm"
-                  >
-                    <div className="p-1 rounded bg-zinc-700/50 group-hover:bg-yellow-500/20 transition-colors">
-                      <Crown className="w-3.5 h-3.5 text-zinc-300 group-hover:text-yellow-400 transition-colors" />
-                    </div>
-                    <span className="text-xs font-semibold text-zinc-100 group-hover:text-zinc-50">Upgrade Plan</span>
-                    <TrendingUp className="w-3.5 h-3.5 text-zinc-400 ml-auto group-hover:text-zinc-300 transition-colors" />
-                  </Link>
-                </div>
-              </div>
-
-              <DropdownMenuSeparator className="bg-zinc-800 my-1" />
-
-              {/* Project Actions */}
-              <DropdownMenuLabel className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1 px-3">
-                Project
-              </DropdownMenuLabel>
-
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-base font-semibold text-[#1f1f1f] sm:text-lg lg:text-xl">{displayProjectName}</h1>
               {canEdit && (
-                <>
-              {/* Rename */}
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={() => { setRenameValue(project?.name || ''); setRenameOpen(true); }}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Edit2 className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Rename Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              {/* Duplicate */}
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={duplicateProject}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Copy className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Duplicate Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              {/* Remix */}
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={remixProject}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <FileText className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Remix Project</span>
-                </div>
-              </DropdownMenuItem>
-                </>
-              )}
-
-              {/* Export */}
-              <DropdownMenuItem className="px-3 py-2.5 cursor-pointer" onSelect={downloadProject}>
-                <div className="flex items-center gap-2.5 w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Download className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Export Project</span>
-                </div>
-              </DropdownMenuItem>
-
-              <DropdownMenuSeparator className="bg-zinc-800 my-1" />
-
-              {/* Settings */}
-              <DropdownMenuItem asChild className="px-3 py-2.5">
-                <Link href="/settings" className="flex items-center gap-2.5 cursor-pointer w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <Settings className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Settings</span>
-                </Link>
-              </DropdownMenuItem>
-
-              {/* Help & Support */}
-              <DropdownMenuItem asChild className="px-3 py-2.5">
-                <Link href="/help" className="flex items-center gap-2.5 cursor-pointer w-full">
-                  <div className="p-1.5 rounded-md bg-zinc-800">
-                    <HelpCircle className="w-3.5 h-3.5 text-zinc-300" />
-                  </div>
-                  <span className="text-sm text-zinc-100">Help & Support</span>
-                </Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          </div>
-        </div>
-
-        {/* Right: Action Buttons (desktop only) - only when user can edit */}
-        {canEdit && (
-        <div className="hidden lg:flex items-center gap-2 overflow-x-auto custom-scrollbar min-w-0 max-w-[min(46vw,24rem)] lg:max-w-[min(52vw,32rem)] xl:max-w-none shrink-0 lg:shrink">
-          <button onClick={handleOpenIntegrations} className="h-9 px-4 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 group shadow-sm hover:shadow-md flex items-center">
-            <Plug className="w-4 h-4 mr-2 text-zinc-400 group-hover:text-zinc-300 transition-colors" />
-            Integrations
-          </button>
-          <button
-            type="button"
-            onClick={() => setDeployOpen(true)}
-            className="h-9 px-4 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 bg-transparent min-w-fit flex items-center"
-          >
-            <Rocket className="w-4 h-4 mr-2 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
-            Deploy
-          </button>
-          {githubConnected === false ? (
-            <button
-              type="button"
-              onClick={handleConnectGitHub}
-              className="h-9 px-4 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 group shadow-sm hover:shadow-md flex items-center"
-            >
-              <Github className="w-4 h-4 mr-2 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
-              Connect GitHub
-            </button>
-          ) : githubConnected === true && project?.files?.length ? (
-            <div className="flex items-center gap-1.5">
-              {project.githubRepoUrl ? (
-                <>
-                  <a
-                    href={project.githubRepoUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="h-9 px-3 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 flex items-center gap-1.5 truncate max-w-[180px]"
-                    title={project.githubRepoUrl}
-                  >
-                    <Github className="w-4 h-4 shrink-0 text-zinc-400" />
-                    <span className="truncate">{project.githubRepoFullName || "View repo"}</span>
-                    <ExternalLink className="w-3 h-3 shrink-0 opacity-70" />
-                  </a>
-                  <button
-                    type="button"
-                    onClick={handleSyncToGitHub}
-                    disabled={isSyncing}
-                    className="h-9 px-3 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 flex items-center disabled:opacity-50"
-                    title="Re-sync to GitHub"
-                  >
-                    {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  </button>
-                </>
-              ) : (
                 <button
                   type="button"
-                  onClick={handleSyncToGitHub}
-                  disabled={isSyncing}
-                  className="h-9 px-4 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 group shadow-sm hover:shadow-md flex items-center"
+                  onClick={() => setWebsiteSettingsOpen(true)}
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+                  aria-label="Open website settings"
+                  title="Website Settings"
                 >
-                  {isSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Github className="w-4 h-4 mr-2 text-zinc-400 group-hover:text-zinc-200 transition-colors" />}
-                  {isSyncing ? "Syncing…" : "Sync to GitHub"}
+                  <Edit2 className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
-          ) : null}
-          <button onClick={handleShare} className="h-9 px-4 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-lg transition-all duration-200 bg-transparent min-w-fit flex items-center">
-            <Share className="w-4 h-4 mr-2 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
-            Share
-          </button>
-        </div>
-        )}
-
-        {/* Mobile Share Button - touch-friendly (only when can edit) */}
-        {canEdit && (
-        <div className="lg:hidden flex items-center min-h-[44px]">
-          <button 
-            onClick={handleShare} 
-            className="h-11 min-w-[44px] px-4 text-xs font-semibold text-zinc-300 hover:text-zinc-50 hover:bg-zinc-800/90 border border-zinc-800/50 hover:border-zinc-700/70 rounded-xl transition-all duration-200 bg-transparent flex items-center justify-center touch-manipulation"
-          >
-            <Share className="w-4 h-4 mr-2 text-zinc-400 group-hover:text-zinc-200 transition-colors" />
-            Share
-          </button>
-        </div>
-        )}
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
-        {/* AI-suggested backend: Connect Supabase? banner */}
-        {project?.suggestsBackend && !project?.supabaseUrl && !suggestBackendDismissed && (
-          <div className="flex-shrink-0 px-3 sm:px-4 py-2.5 border-b border-zinc-600/50 bg-zinc-900/50 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-zinc-600/20 border border-zinc-500/30 flex items-center justify-center shrink-0">
-                <Database className="w-4 h-4 text-zinc-400" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-zinc-100">This project could use a database</p>
-                <p className="text-xs text-zinc-500">Connect Supabase to add auth and persistent data—like Rocket.new.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setSuggestBackendDismissed(true)}
-                className="px-3 py-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Maybe later
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIntegrationsOpen(true); setSupabaseConnectOpen(true) }}
-                className="inline-flex items-center justify-center rounded-lg bg-white hover:bg-zinc-100 border border-zinc-200/80 px-3 py-1.5 transition-colors"
-              >
-                <img src="/Images/connect-supabase-light.svg" alt="Connect with Supabase" className="h-8 w-auto" />
-              </button>
-            </div>
           </div>
-        )}
+          <div className="hidden items-center gap-2 lg:flex">
+            <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100" onClick={() => setWebsiteSettingsOpen(true)}>
+              Website Settings
+            </Button>
+            <Button type="button" size="sm" className="h-9 rounded-lg bg-[#1f1f1f] px-3 text-white hover:bg-black" onClick={() => setDeployOpen(true)}>
+              Go Live
+            </Button>
+          </div>
+        </header>
 
-        <Dialog open={deployOpen} onOpenChange={setDeployOpen}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),28rem)] sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-zinc-100">Deploy</DialogTitle>
-              <DialogDescription className="text-zinc-400">
-                Deploy this project to Netlify or Vercel.
-              </DialogDescription>
-            </DialogHeader>
+        <div className="mb-3 lg:hidden">
+          <div className="inline-flex w-full rounded-2xl border border-zinc-200 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setMobileTab("chat")}
+              className={cn(
+                "flex-1 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                mobileTab === "chat" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"
+              )}
+            >
+              Talk to Builder
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab("preview")}
+              className={cn(
+                "flex-1 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                mobileTab === "preview" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"
+              )}
+            >
+              Website Preview
+            </button>
+          </div>
+        </div>
 
-            <div className="flex border-b border-zinc-800 -mx-6 px-6">
-              <button
-                type="button"
-                onClick={() => setDeployTab("netlify")}
-                className={cn(
-                  "py-2.5 px-3 text-sm font-medium border-b-2 transition-colors -mb-px",
-                  deployTab === "netlify"
-                    ? "border-zinc-100 text-zinc-100"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300"
-                )}
-              >
-                Netlify
-              </button>
-              <button
-                type="button"
-                onClick={() => setDeployTab("vercel")}
-                className={cn(
-                  "py-2.5 px-3 text-sm font-medium border-b-2 transition-colors -mb-px",
-                  deployTab === "vercel"
-                    ? "border-zinc-100 text-zinc-100"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300"
-                )}
-              >
-                Vercel
-              </button>
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-10 lg:gap-6">
+          <section className={cn(
+            "flex min-h-[52vh] flex-col overflow-hidden border border-zinc-200 bg-white lg:col-span-3 lg:min-h-0",
+            mobileTab !== "chat" && "hidden lg:flex"
+          )}>
+            <div className="border-b border-zinc-100 px-4 py-3 sm:px-5 sm:py-4">
+              <p className="text-sm font-semibold tracking-wide text-zinc-800">Conversation</p>
+              <p className="mt-1 text-xs text-zinc-500">{editingContextLabel || "Editing entire website"}</p>
             </div>
 
-            <div className="space-y-4">
-              {deployTab === "netlify" && (
-                <>
-                  <div className="space-y-3">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                      <div className="text-sm text-zinc-300">
-                        Status: {netlifyConnected === null ? "Checking..." : netlifyConnected ? "Connected" : "Not connected"}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {!netlifyConnected ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="border-zinc-800 text-zinc-200 bg-transparent hover:bg-zinc-900"
-                            onClick={handleConnectNetlify}
-                            disabled={isDeploying}
-                          >
-                            Connect Netlify
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            className="bg-zinc-100 text-zinc-900 hover:bg-white"
-                            onClick={handleDeployToNetlify}
-                            disabled={isDeploying}
-                          >
-                            {isDeploying ? "Deploying..." : deployLinks?.siteId ? "Update live site" : "Deploy live site"}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-zinc-400">
-                        Site name (optional)
-                      </label>
-                      <Input
-                        value={netlifySiteName}
-                        onChange={(e) => setNetlifySiteName(e.target.value)}
-                        placeholder={project?.name ? `${project.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}` : "my-project"}
-                        className="h-9 bg-zinc-900 border-zinc-700 text-xs text-zinc-100 placeholder:text-zinc-500"
+            <div className="h-[32vh] min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:h-[38vh] sm:px-5 sm:py-5 lg:h-auto">
+              <div className="max-w-[90%] rounded-2xl bg-zinc-100 px-4 py-3 text-sm leading-relaxed text-zinc-800">
+                {project.prompt}
+              </div>
+              {project.messages?.map((msg, i) => (
+                <div key={i} className={cn("group", msg.role === "user" ? "ml-auto max-w-[90%]" : "mr-auto max-w-[90%]")}>
+                  {msg.role === "user" && editingTarget?.kind === "message" && editingTarget.index === i ? (
+                    <div className="rounded-2xl bg-[#1f1f1f] px-3 py-3 text-white">
+                      <textarea
+                        value={editingDraft}
+                        onChange={(e) => setEditingDraft(e.target.value)}
+                        className="w-full resize-none bg-transparent text-sm text-white outline-none"
+                        rows={3}
+                        autoFocus
                       />
-                      <p className="text-[11px] text-zinc-500">
-                        This controls how your Netlify URL looks, for example <span className="font-mono">my-project.netlify.app</span>.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                    <div className="text-xs text-zinc-400">Current step</div>
-                    <div className="mt-1 text-sm text-zinc-100 font-mono">{deployStep || "-"}</div>
-                  </div>
-                  {deployError && (
-                    <div className="rounded-xl border border-red-900/40 bg-red-950/30 p-3 text-sm text-red-300">
-                      {deployError}
-                    </div>
-                  )}
-                  {deployLinks && (
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 space-y-2">
-                      <div className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
-                        Your live website
-                      </div>
-                      <div className="mt-1 space-y-2.5 text-sm">
-                        {deployLinks.siteUrl && (() => {
-                          let label = "your-site.netlify.app"
-                          try {
-                            const u = new URL(deployLinks.siteUrl as string)
-                            label = u.host
-                          } catch {
-                            // ignore parse errors, keep default label
-                          }
-                          return (
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                              <div className="flex flex-col">
-                                <span className="text-zinc-100 font-medium">Shareable link</span>
-                                <span className="text-[11px] text-zinc-500">
-                                  This is the link you send to friends or customers.
-                                </span>
-                              </div>
-                              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-1.5 sm:min-w-[40%] sm:justify-end">
-                                <a
-                                  className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-zinc-950 bg-amber-400 hover:bg-amber-300 shadow-sm w-full sm:w-auto"
-                                  href={deployLinks.siteUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  <span className="truncate max-w-[160px]">{label}</span>
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </a>
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center justify-center h-8 w-full sm:w-8 rounded-full border border-zinc-700/70 bg-zinc-900/80 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 text-[11px]"
-                                  onClick={() => {
-                                    try {
-                                      navigator.clipboard.writeText(deployLinks.siteUrl as string)
-                                      toast({ title: "Link copied" })
-                                    } catch {
-                                      // ignore clipboard errors
-                                    }
-                                  }}
-                                  aria-label="Copy link"
-                                >
-                                  <Copy className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })()}
-                        {deployLinks.deployUrl && (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <div className="flex flex-col">
-                              <span className="text-zinc-300">Most recent publish</span>
-                              <span className="text-[11px] text-zinc-500">
-                                Opens the latest version of your site Netlify put online.
-                              </span>
-                            </div>
-                            <a
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-white w-full sm:w-auto"
-                              href={deployLinks.deployUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <span>View deployment</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        )}
-                        {deployLinks.adminUrl && (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <div className="flex flex-col">
-                              <span className="text-zinc-300">Website settings</span>
-                              <span className="text-[11px] text-zinc-500">
-                                Change things like domain, redirects, and other options.
-                              </span>
-                            </div>
-                            <a
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-white w-full sm:w-auto"
-                              href={deployLinks.adminUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <span>Open dashboard</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        )}
-                        {deployLinks.adminUrl &&
-                          deployLinks.deployId &&
-                          (() => {
-                            try {
-                              const u = new URL(deployLinks.adminUrl as string)
-                              u.pathname = `${u.pathname.replace(/\/$/, "")}/deploys/${deployLinks.deployId}`
-                              const href = u.toString()
-                              return (
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                                  <div className="flex flex-col">
-                                    <span className="text-zinc-300">Previous publishes</span>
-                                    <span className="text-[11px] text-zinc-500">
-                                      Handy if the site broke after a change and you want to inspect it.
-                                    </span>
-                                  </div>
-                                  <a
-                                    className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-white w-full sm:w-auto"
-                                    href={href}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <span>View in Netlify</span>
-                                    <ExternalLink className="w-3.5 h-3.5" />
-                                  </a>
-                                </div>
-                              )
-                            } catch {
-                              return null
-                            }
-                          })()}
-                        {netlifyLogUrl && (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <div className="flex flex-col">
-                              <span className="text-zinc-300">Technical details (optional)</span>
-                              <span className="text-[11px] text-zinc-500">
-                                Extra information for developers. Safe to ignore if your site looks good.
-                              </span>
-                            </div>
-                            <a
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/70 w-full sm:w-auto"
-                              href={netlifyLogUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <span>Open logs</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                      {netlifyDeployState && (
-                        <div className="pt-2 text-xs text-zinc-400">
-                          Netlify status: <span className="text-zinc-200 font-mono">{netlifyDeployState}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className="rounded-xl border border-zinc-800 bg-black/30 overflow-hidden">
-                    <div className="px-3 py-2 border-b border-zinc-800 text-xs text-zinc-400">Build logs (E2B)</div>
-                    <div className="max-h-64 overflow-y-auto p-3 font-mono text-xs text-zinc-200 whitespace-pre-wrap">
-                      {deployLogs.length ? deployLogs.join("\n") : "No logs yet."}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {deployTab === "vercel" && (
-                <>
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Zap className="w-6 h-6 text-zinc-300" />
-                      <div>
-                        <h3 className="text-sm font-semibold text-zinc-100">Vercel</h3>
-                        <p className="text-xs text-zinc-500">
-                          {vercelConnected === null ? "Checking..." : vercelConnected ? "Connected" : "Enter your Personal Access Token to deploy"}
-                        </p>
-                      </div>
-                    </div>
-                    {!vercelConnected ? (
-                      <div className="space-y-3">
-                        <p className="text-xs text-zinc-400">
-                          We need a Personal Access Token to deploy to your Vercel account. It&apos;s stored per project and only used to create deployments. Create one at:
-                        </p>
-                        <a
-                          href="https://vercel.com/account/tokens"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 text-xs text-zinc-300 hover:text-zinc-100 underline"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                          vercel.com/account/tokens
-                        </a>
-                        <Input
-                          value={vercelTokenInput}
-                          onChange={(e) => setVercelTokenInput(e.target.value)}
-                          placeholder="vercel_pat_..."
-                          className="bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
-                        />
+                      <div className="mt-2 flex justify-end gap-2">
                         <Button
                           type="button"
-                          className="bg-zinc-100 text-zinc-900 hover:bg-white w-full"
-                          onClick={handleSaveVercelToken}
-                          disabled={!vercelTokenInput.trim() || isVercelDeploying}
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+                          onClick={handleCancelEdit}
                         >
-                          Save Token
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 bg-white text-zinc-900 hover:bg-zinc-200"
+                          onClick={() => handleEditSubmit(editingDraft)}
+                          disabled={!editingDraft.trim()}
+                        >
+                          Save
                         </Button>
                       </div>
-                    ) : (
-                      <Button
-                        type="button"
-                        className="bg-zinc-100 text-zinc-900 hover:bg-white w-full"
-                        onClick={handleDeployToVercel}
-                        disabled={isVercelDeploying}
-                      >
-                        {isVercelDeploying ? "Deploying..." : "Deploy to Vercel"}
-                      </Button>
-                    )}
-                  </div>
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                    <div className="text-xs text-zinc-400">Current step</div>
-                    <div className="mt-1 text-sm text-zinc-100 font-mono">{vercelDeployStep || "-"}</div>
-                  </div>
-                  {vercelDeployError && (
-                    <div className="rounded-xl border border-red-900/40 bg-red-950/30 p-3 text-sm text-red-300">
-                      {vercelDeployError}
-                    </div>
-                  )}
-                  {vercelDeployLinks && (
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 space-y-3">
-                      <div className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                        Your site on Vercel
-                      </div>
-                      <div className="space-y-2.5 text-sm">
-                        {vercelDeployLinks.siteUrl && (() => {
-                          let host = "your-site.vercel.app"
-                          try {
-                            const u = new URL(vercelDeployLinks.siteUrl as string)
-                            host = u.host
-                          } catch {
-                            // ignore
-                          }
-                          return (
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                              <div className="flex flex-col">
-                                <span className="text-zinc-300">Shareable link</span>
-                                <span className="text-[11px] text-zinc-500">
-                                  This is the main URL people will visit.
-                                </span>
-                              </div>
-                              <a
-                                className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-zinc-950 bg-zinc-100 hover:bg-white w-full sm:w-auto"
-                                href={vercelDeployLinks.siteUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <span className="truncate max-w-[160px]">{host}</span>
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            </div>
-                          )
-                        })()}
-                        {vercelDeployLinks.deployUrl && vercelDeployLinks.deployUrl !== vercelDeployLinks.siteUrl && (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <div className="flex flex-col">
-                              <span className="text-zinc-300">Preview link</span>
-                              <span className="text-[11px] text-zinc-500">
-                                A preview just for this deployment.
-                              </span>
-                            </div>
-                            <a
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-white w-full sm:w-auto"
-                              href={vercelDeployLinks.deployUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <span>Open preview</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        )}
-                        {vercelDeployLinks.adminUrl && (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <div className="flex flex-col">
-                              <span className="text-zinc-300">Project in Vercel</span>
-                              <span className="text-[11px] text-zinc-500">
-                                Manage domains, env vars, and more.
-                              </span>
-                            </div>
-                            <a
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-white w-full sm:w-auto"
-                              href={vercelDeployLinks.adminUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <span>Open in Vercel</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        )}
-                        {vercelLogUrl && (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <div className="flex flex-col">
-                              <span className="text-zinc-300">Build logs</span>
-                              <span className="text-[11px] text-zinc-500">
-                                Only needed if something goes wrong.
-                              </span>
-                            </div>
-                            <a
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/70 w-full sm:w-auto"
-                              href={vercelLogUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <span>Open logs</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                      {vercelDeployState && (
-                        <div className="pt-2 text-xs text-zinc-500 border-t border-zinc-800">
-                          Status: <span className="text-zinc-300 font-mono">{vercelDeployState}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className="rounded-xl border border-zinc-800 bg-black/30 overflow-hidden">
-                    <div className="px-3 py-2 border-b border-zinc-800 text-xs text-zinc-400">Deploy logs</div>
-                    <div className="max-h-64 overflow-y-auto p-3 font-mono text-xs text-zinc-200 whitespace-pre-wrap">
-                      {vercelDeployLogs.length ? vercelDeployLogs.join("\n") : "No logs yet."}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Integrations modal - wider on desktop; mobile: full-height, horizontal nav */}
-        <Dialog open={integrationsOpen} onOpenChange={(open) => { setIntegrationsOpen(open); if (!open) setSupabaseConnectOpen(false) }}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl w-[calc(100vw-1rem)] max-w-[min(calc(100vw-1rem),48rem)] sm:max-w-3xl md:max-w-4xl sm:w-[95vw] p-0 overflow-hidden flex flex-col max-h-[90dvh] sm:max-h-[85vh]">
-            <DialogHeader className="flex-shrink-0 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 border-b border-zinc-800/60">
-              <DialogTitle className="text-zinc-100 text-base sm:text-lg font-semibold">Integrations</DialogTitle>
-              <p className="text-zinc-400 text-xs sm:text-sm mt-0.5 sm:hidden">
-                Link your accounts and put your app online.
-              </p>
-              <DialogDescription className="text-zinc-400 text-xs sm:text-sm mt-0.5 hidden sm:block">
-                Connect services to sync, deploy, and add a backend to this project.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
-              {/* Nav: horizontal scroll on mobile, vertical sidebar on md+ */}
-              <nav className="flex-shrink-0 flex flex-row md:flex-col overflow-x-auto md:overflow-visible border-b md:border-b-0 md:border-r border-zinc-800/60 bg-zinc-900/30 py-2 md:py-3 md:w-44 lg:w-52 custom-scrollbar">
-                <div className="flex flex-row md:flex-col gap-1.5 md:gap-0 md:space-y-0.5 px-2 md:px-3 md:min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIntegration("all")}
-                    className={cn(
-                      "shrink-0 md:w-full flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 min-h-[44px] md:min-h-0",
-                      selectedIntegration === "all"
-                        ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60"
-                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent"
-                    )}
-                  >
-                    <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                      <LayoutGrid className="w-4 h-4 text-zinc-300" />
-                    </div>
-                    <span className="text-sm font-medium whitespace-nowrap">All</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIntegration("github")}
-                    className={cn(
-                      "shrink-0 md:w-full flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 min-h-[44px] md:min-h-0",
-                      selectedIntegration === "github"
-                        ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60"
-                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent"
-                    )}
-                  >
-                    <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                      <Github className="w-4 h-4 text-zinc-300" />
-                    </div>
-                    <div className="flex-1 min-w-0 hidden sm:block">
-                      <span className="text-sm font-medium block">GitHub</span>
-                      {githubConnected === true && (
-                        <span className="text-[10px] text-zinc-400 font-medium">Connected</span>
-                      )}
-                    </div>
-                    <span className="text-sm font-medium sm:hidden whitespace-nowrap">GitHub</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIntegration("netlify")}
-                    className={cn(
-                      "hidden sm:flex shrink-0 md:w-full items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 min-h-[44px] md:min-h-0",
-                      selectedIntegration === "netlify"
-                        ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60"
-                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent"
-                    )}
-                  >
-                    <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                      <Rocket className="w-4 h-4 text-zinc-300" />
-                    </div>
-                    <div className="flex-1 min-w-0 hidden sm:block">
-                      <span className="text-sm font-medium block">Netlify</span>
-                      {netlifyConnected === true && (
-                        <span className="text-[10px] text-zinc-400 font-medium">Connected</span>
-                      )}
-                    </div>
-                    <span className="text-sm font-medium sm:hidden whitespace-nowrap">Netlify</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIntegration("vercel")}
-                    className={cn(
-                      "hidden sm:flex shrink-0 md:w-full items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 min-h-[44px] md:min-h-0",
-                      selectedIntegration === "vercel"
-                        ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60"
-                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent"
-                    )}
-                  >
-                    <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                      <Zap className="w-4 h-4 text-zinc-300" />
-                    </div>
-                    <div className="flex-1 min-w-0 hidden sm:block">
-                      <span className="text-sm font-medium block">Vercel</span>
-                      {vercelConnected === true && (
-                        <span className="text-[10px] text-zinc-400 font-medium">Connected</span>
-                      )}
-                    </div>
-                    <span className="text-sm font-medium sm:hidden whitespace-nowrap">Vercel</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIntegration("supabase")}
-                    className={cn(
-                      "hidden sm:flex shrink-0 md:w-full items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 min-h-[44px] md:min-h-0",
-                      selectedIntegration === "supabase"
-                        ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60"
-                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent"
-                    )}
-                  >
-                    <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-zinc-600/10 border border-zinc-500/20 flex items-center justify-center shrink-0">
-                      <Database className="w-4 h-4 text-zinc-400" />
-                    </div>
-                    <div className="flex-1 min-w-0 hidden sm:block">
-                      <span className="text-sm font-medium block">Supabase</span>
-                      {supabaseConnected && (
-                        <span className="text-[10px] text-zinc-400 font-medium">Connected</span>
-                      )}
-                    </div>
-                    <span className="text-sm font-medium sm:hidden whitespace-nowrap">Supabase</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIntegration("vars")}
-                    className={cn(
-                      "shrink-0 md:w-full flex items-center gap-2 md:gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 min-h-[44px] md:min-h-0",
-                      selectedIntegration === "vars"
-                        ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60"
-                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent"
-                    )}
-                  >
-                    <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                      <Key className="w-4 h-4 text-zinc-300" />
-                    </div>
-                    <span className="text-sm font-medium whitespace-nowrap sm:hidden">Secrets</span>
-                    <span className="text-sm font-medium whitespace-nowrap hidden sm:inline">Vars</span>
-                  </button>
-                </div>
-                <div className="hidden md:block mt-auto px-2 sm:px-3 pt-3 border-t border-zinc-800/60">
-                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">More coming</p>
-                  <p className="text-xs text-zinc-600 mt-0.5">Stripe and others soon.</p>
-                </div>
-              </nav>
-              {/* Right content - selected integration */}
-              <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar p-4 sm:p-6">
-                {selectedIntegration === "all" && (
-                  <div className="space-y-4">
-                    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                          <Github className="w-6 h-6 text-zinc-300" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-base font-semibold text-zinc-100">GitHub</h3>
-                          <p className="text-sm text-zinc-500 mt-1 sm:hidden">Save your code to GitHub so you can share it or open it elsewhere.</p>
-                          <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Create a repo and sync your project code. Re-sync whenever you make changes.</p>
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            {githubConnected === false ? (
-                              <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleConnectGitHub}>
-                                <Github className="w-3.5 h-3.5 mr-2" />
-                                <span className="sm:hidden">Link my GitHub</span>
-                                <span className="hidden sm:inline">Connect GitHub</span>
-                              </Button>
-                            ) : (
-                              <>
-                                {project?.githubRepoUrl ? (
-                                  <>
-                                    <a href={project.githubRepoUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/50 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-800 hover:text-zinc-100 transition-colors">
-                                      <ExternalLink className="w-3.5 h-3.5" /> View repo
-                                    </a>
-                                    <Button type="button" size="sm" variant="outline" className="h-9 px-3 text-xs font-semibold border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" onClick={handleSyncToGitHub} disabled={isSyncing || !project?.files?.length}>
-                                      {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
-                                      <span className="sm:hidden">{isSyncing ? "Updating…" : "Update my repo"}</span>
-                                      <span className="hidden sm:inline">{isSyncing ? "Syncing…" : "Re-sync"}</span>
-                                    </Button>
-                                  </>
-                                ) : project?.files?.length ? (
-                                  <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleSyncToGitHub} disabled={isSyncing}>
-                                    {isSyncing ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Github className="w-3.5 h-3.5 mr-2" />}
-                                    <span className="sm:hidden">{isSyncing ? "Saving…" : "Save to GitHub"}</span>
-                                    <span className="hidden sm:inline">{isSyncing ? "Syncing…" : "Sync to GitHub"}</span>
-                                  </Button>
-                                ) : null}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                          <Rocket className="w-6 h-6 text-zinc-300" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-base font-semibold text-zinc-100">Netlify</h3>
-                          <p className="text-sm text-zinc-500 mt-1 sm:hidden">Put your app on the web with a live link. Connect once, then publish with one tap.</p>
-                          <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Deploy this project to Netlify for a live URL. One-click deploy after connecting your account.</p>
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            {!netlifyConnected ? (
-                              <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleConnectNetlify}>
-                                <span className="sm:hidden">Link Netlify</span>
-                                <span className="hidden sm:inline">Connect Netlify</span>
-                              </Button>
-                            ) : (
-                              <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={() => { setIntegrationsOpen(false); setDeployTab("netlify"); setDeployOpen(true) }}>
-                                <span className="sm:hidden">Publish online</span>
-                                <span className="hidden sm:inline">Deploy to Netlify</span>
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                          <Zap className="w-6 h-6 text-zinc-300" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-base font-semibold text-zinc-100">Vercel</h3>
-                          <p className="text-sm text-zinc-500 mt-1 sm:hidden">Get a live link for your app. Paste a token from Vercel below—we&apos;ll tell you where to get it.</p>
-                          <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Deploy to Vercel&apos;s global edge network. We need a Personal Access Token (stored per project, only used to create deployments).</p>
-                          <div className="mt-3 text-xs sm:hidden">
-                            <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 underline">
-                              <ExternalLink className="w-3.5 h-3.5" /> Get your token (opens Vercel)
-                            </a>
-                          </div>
-                          <div className="mt-3 text-xs hidden sm:block">
-                            <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 underline">
-                              <ExternalLink className="w-3.5 h-3.5" /> Create token at vercel.com/account/tokens
-                            </a>
-                          </div>
-                          <div className="mt-4 flex flex-wrap gap-2 items-end">
-                            {!vercelConnected ? (
-                              <>
-                                <Input
-                                  value={vercelTokenInput}
-                                  onChange={(e) => setVercelTokenInput(e.target.value)}
-                                  placeholder="Paste token here"
-                                  className="h-9 w-full min-w-0 sm:w-64 bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 text-xs"
-                                />
-                                <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleSaveVercelToken} disabled={!vercelTokenInput.trim()}>
-                                  <span className="sm:hidden">Save</span>
-                                  <span className="hidden sm:inline">Save Token</span>
-                                </Button>
-                              </>
-                            ) : (
-                              <>
-                                <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={() => { setIntegrationsOpen(false); setDeployTab("vercel"); setDeployOpen(true) }} disabled={isVercelDeploying}>
-                                  {isVercelDeploying ? "Deploying..." : "Deploy to Vercel"}
-                                </Button>
-                                {vercelDeployLinks?.siteUrl && (
-                                  <a href={vercelDeployLinks.siteUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-300 underline break-all">
-                                    <ExternalLink className="w-3.5 h-3.5" /> {vercelDeployLinks.siteUrl}
-                                  </a>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-zinc-600/10 border border-zinc-500/20 flex items-center justify-center shrink-0">
-                          <Database className="w-6 h-6 text-zinc-400" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-base font-semibold text-zinc-100">Supabase</h3>
-                          <p className="text-sm text-zinc-500 mt-1 sm:hidden">Add sign-in and a database to your app. We&apos;ll set it up for you.</p>
-                          <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Add a backend: auth, database, and real-time. We'll inject the Supabase client and a starter SQL migration.</p>
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            {!supabaseConnected ? (
-                              <Button type="button" size="sm" className="h-9 px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-100 border border-zinc-200/80" onClick={() => setSupabaseConnectOpen(true)}>
-                                <img src="/Images/connect-supabase-light.svg" alt="Connect with Supabase" className="h-7 w-auto" />
-                              </Button>
-                            ) : (
-                              <>
-                                <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleInjectSupabase} disabled={supabaseInjecting}>
-                                  {supabaseInjecting ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-2" />}
-                                  <span className="sm:hidden">{supabaseInjecting ? "Setting up…" : "Set up in my project"}</span>
-                                  <span className="hidden sm:inline">{supabaseInjecting ? "Adding…" : "Add client & migration"}</span>
-                                </Button>
-                                <Button type="button" size="sm" variant="ghost" className="h-9 px-3 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50" onClick={() => updateDoc(doc(db, "projects", projectId), { supabaseUrl: deleteField(), supabaseAnonKey: deleteField(), supabaseServiceRoleKey: deleteField(), supabaseConnectedAt: deleteField() })}>
-                                  <span className="sm:hidden">Unlink</span>
-                                  <span className="hidden sm:inline">Disconnect</span>
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {selectedIntegration === "github" && (
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                        <Github className="w-6 h-6 text-zinc-300" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-zinc-100">GitHub</h3>
-                        <p className="text-sm text-zinc-500 mt-1 sm:hidden">Save your code to GitHub so you can share it or open it elsewhere.</p>
-                        <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Create a repo and sync your project code. Re-sync whenever you make changes so your repository stays up to date.</p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {githubConnected === false ? (
-                            <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleConnectGitHub}>
-                              <Github className="w-3.5 h-3.5 mr-2" />
-                              <span className="sm:hidden">Link my GitHub</span>
-                              <span className="hidden sm:inline">Connect GitHub</span>
-                            </Button>
-                          ) : (
-                            <>
-                              {project?.githubRepoUrl ? (
-                                <>
-                                  <a href={project.githubRepoUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/50 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-800 hover:text-zinc-100 transition-colors">
-                                    <ExternalLink className="w-3.5 h-3.5" /> View repo
-                                  </a>
-                                  <Button type="button" size="sm" variant="outline" className="h-9 px-3 text-xs font-semibold border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" onClick={handleSyncToGitHub} disabled={isSyncing || !project?.files?.length}>
-                                    {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />} {isSyncing ? "Syncing…" : "Re-sync"}
-                                  </Button>
-                                </>
-                              ) : project?.files?.length ? (
-                                <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleSyncToGitHub} disabled={isSyncing}>
-                                  {isSyncing ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Github className="w-3.5 h-3.5 mr-2" />} {isSyncing ? "Syncing…" : "Sync to GitHub"}
-                                </Button>
-                              ) : null}
-                              <Button type="button" size="sm" variant="ghost" className="h-9 px-3 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50" onClick={() => { handleDisconnectGitHub(); setIntegrationsOpen(false) }}>Disconnect</Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {selectedIntegration === "netlify" && (
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                        <Rocket className="w-6 h-6 text-zinc-300" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-zinc-100">Netlify</h3>
-                        <p className="text-sm text-zinc-500 mt-1 sm:hidden">Put your app on the web with a live link. Connect once, then publish with one tap.</p>
-                        <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Deploy this project to Netlify for a live URL. One-click deploy after connecting your account.</p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {!netlifyConnected ? (
-                            <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleConnectNetlify}>
-                              <span className="sm:hidden">Link Netlify</span>
-                              <span className="hidden sm:inline">Connect Netlify</span>
-                            </Button>
-                          ) : (
-                            <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={() => { setIntegrationsOpen(false); setDeployTab("netlify"); setDeployOpen(true) }}>
-                              <span className="sm:hidden">Publish online</span>
-                              <span className="hidden sm:inline">Deploy to Netlify</span>
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {selectedIntegration === "vercel" && (
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                        <Zap className="w-6 h-6 text-zinc-300" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-zinc-100">Vercel</h3>
-                        <p className="text-sm text-zinc-500 mt-1 sm:hidden">Get a live link for your app. Paste a token from Vercel below—get it at vercel.com/account/tokens.</p>
-                        <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Deploy to Vercel&apos;s global edge network. We need a Personal Access Token so we can create deployments on your behalf. Your token is stored per project and only used to deploy.</p>
-                        <div className="mt-3 p-3 rounded-lg bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 sm:hidden">
-                          <span className="font-medium text-zinc-300">Where to get it:</span> Open{" "}
-                          <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-zinc-200 hover:text-zinc-100 underline">
-                            vercel.com/account/tokens <ExternalLink className="w-3 h-3" />
-                          </a>
-                          , create a token, then paste it below.
-                        </div>
-                        <div className="mt-3 p-3 rounded-lg bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 hidden sm:block">
-                          <span className="font-medium text-zinc-300">How to get your token:</span> Go to{" "}
-                          <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-zinc-200 hover:text-zinc-100 underline">
-                            vercel.com/account/tokens <ExternalLink className="w-3 h-3" />
-                          </a>
-                          , create a new token (e.g. &quot;BuildKit&quot;), and paste it below.
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2 items-end">
-                          {!vercelConnected ? (
-                            <>
-                              <Input
-                                value={vercelTokenInput}
-                                onChange={(e) => setVercelTokenInput(e.target.value)}
-                                placeholder="Paste token here"
-                                className="h-9 w-full min-w-0 sm:w-64 bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 text-xs"
-                              />
-                              <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleSaveVercelToken} disabled={!vercelTokenInput.trim()}>
-                                <span className="sm:hidden">Save</span>
-                                <span className="hidden sm:inline">Save Token</span>
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-xs text-green-500 font-medium">Connected ✓</p>
-                              <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={() => { setIntegrationsOpen(false); setDeployTab("vercel"); setDeployOpen(true) }} disabled={isVercelDeploying}>
-                                <span className="sm:hidden">{isVercelDeploying ? "Publishing…" : "Publish online"}</span>
-                                <span className="hidden sm:inline">{isVercelDeploying ? "Deploying..." : "Deploy to Vercel"}</span>
-                              </Button>
-                              {vercelDeployLinks?.siteUrl && (
-                                <a href={vercelDeployLinks.siteUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/50 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-800 hover:text-zinc-100 transition-colors break-all">
-                                  <ExternalLink className="w-3.5 h-3.5" /> Live site
-                                </a>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {selectedIntegration === "supabase" && (
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-zinc-600/10 border border-zinc-500/20 flex items-center justify-center shrink-0">
-                        <Database className="w-6 h-6 text-zinc-400" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-zinc-100">Supabase</h3>
-                        <p className="text-sm text-zinc-500 mt-1 sm:hidden">Add sign-in and a database to your app. We&apos;ll set it up for you.</p>
-                        <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Add a backend: auth, database, and real-time. We'll inject the Supabase client and a starter SQL migration into your project.</p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {!supabaseConnected ? (
-                            <Button type="button" size="sm" className="h-9 px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-100 border border-zinc-200/80" onClick={() => setSupabaseConnectOpen(true)}>
-                              <img src="/Images/connect-supabase-light.svg" alt="Connect with Supabase" className="h-7 w-auto" />
-                            </Button>
-                          ) : (
-                            <>
-                              <Button type="button" size="sm" className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleInjectSupabase} disabled={supabaseInjecting}>
-                                {supabaseInjecting ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-2" />}
-                                <span className="sm:hidden">{supabaseInjecting ? "Setting up…" : "Set up in my project"}</span>
-                                <span className="hidden sm:inline">{supabaseInjecting ? "Adding…" : "Add client & migration"}</span>
-                              </Button>
-                                <Button type="button" size="sm" variant="ghost" className="h-9 px-3 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50" onClick={() => updateDoc(doc(db, "projects", projectId), { supabaseUrl: deleteField(), supabaseAnonKey: deleteField(), supabaseServiceRoleKey: deleteField(), supabaseConnectedAt: deleteField() })}>
-                                  <span className="sm:hidden">Unlink</span>
-                                  <span className="hidden sm:inline">Disconnect</span>
-                                </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {selectedIntegration === "vars" && (
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-5 sm:p-6 transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0">
-                        <Key className="w-6 h-6 text-zinc-300" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-base font-semibold text-zinc-100 sm:hidden">Secrets & API keys</h3>
-                        <h3 className="text-base font-semibold text-zinc-100 hidden sm:block">Environment variables</h3>
-                        <p className="text-sm text-zinc-500 mt-1 sm:hidden">Add keys your app needs (e.g. from an API). We keep them private and only use them in preview.</p>
-                        <p className="text-sm text-zinc-500 mt-1 hidden sm:block">Add API keys and env vars for preview. Values are encrypted and only injected into the sandbox; they are never shown after save.</p>
-                        {envVarsLoading ? (
-                          <div className="mt-4 flex items-center gap-2 text-zinc-400 text-sm">
-                            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-                          </div>
-                        ) : (
-                          <>
-                            <div className="mt-4 space-y-3">
-                              {envFormEntries.map((entry, idx) => (
-                                <div key={idx} className="flex flex-wrap gap-2 items-center">
-                                  <input
-                                    type="text"
-                                    placeholder="Name"
-                                    value={entry.name}
-                                    onChange={(e) =>
-                                      setEnvFormEntries((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, name: e.target.value } : p))
-                                      )
-                                    }
-                                    className="flex-1 min-w-[120px] rounded-lg border border-zinc-700/60 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                                    title="Variable name"
-                                  />
-                                  <input
-                                    type="password"
-                                    placeholder="Secret / key"
-                                    value={entry.value}
-                                    title="Value"
-                                    onChange={(e) =>
-                                      setEnvFormEntries((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, value: e.target.value } : p))
-                                      )
-                                    }
-                                    className="flex-1 min-w-[140px] rounded-lg border border-zinc-700/60 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                            <div className="mt-4 flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-9 px-3 text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                                onClick={() => setEnvFormEntries((prev) => [...prev, { name: "", value: "" }])}
-                              >
-                                <Plus className="w-3.5 h-3.5 mr-1.5" />
-                                <span className="sm:hidden">Add a secret</span>
-                                <span className="hidden sm:inline">Add variable</span>
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                className="h-9 px-4 text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-white border-0"
-                                onClick={handleSaveEnvVars}
-                                disabled={envVarsSaving}
-                              >
-                                {envVarsSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
-                                {envVarsSaving ? "Saving…" : "Save"}
-                              </Button>
-                            </div>
-                            {envVarNames.length > 0 && (
-                              <p className="mt-3 text-[11px] text-zinc-500">
-                                <span className="sm:hidden">You have {envVarNames.length} secret{envVarNames.length !== 1 ? "s" : ""} saved. Restart preview to use them.</span>
-                                <span className="hidden sm:inline">You have {envVarNames.length} variable{envVarNames.length !== 1 ? "s" : ""} set. Re-run preview to use them.</span>
-                              </p>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Token limit reached — v0-style modal: no generation until reset or upgrade */}
-        <Dialog open={tokenLimitModalOpen} onOpenChange={setTokenLimitModalOpen}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),28rem)] p-0 overflow-hidden">
-            <div className="p-6 sm:p-8 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
-                <Coins className="w-7 h-7 text-amber-400" />
-              </div>
-              <DialogTitle className="text-xl font-semibold text-zinc-100">You&apos;ve used all your tokens</DialogTitle>
-              <DialogDescription className="text-zinc-400 text-sm mt-2">
-                Generation is paused until your tokens reset. Your plan refreshes monthly.
-                {(() => {
-                  const raw = userData?.tokenUsage?.periodEnd
-                  let date: Date | null = raw instanceof Date ? raw : raw != null ? new Date(raw as string | number) : null
-                  if (!date || isNaN(date.getTime())) {
-                    const now = new Date()
-                    date = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-                  }
-                  return (
-                    <span className="block mt-2 text-zinc-300">
-                      Next reset: {date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}
-                    </span>
-                  )
-                })()}
-              </DialogDescription>
-              <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
-                <Button asChild className="bg-amber-500 hover:bg-amber-600 text-zinc-900 font-semibold">
-                  <Link href="/pricing">Upgrade for more tokens</Link>
-                </Button>
-                <Button variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800" onClick={() => setTokenLimitModalOpen(false)}>
-                  Close
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Create Workspace dialog */}
-        <Dialog open={createWorkspaceOpen} onOpenChange={(open) => { setCreateWorkspaceOpen(open); if (!open) setNewWorkspaceName("") }}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),24rem)] sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="text-zinc-100">Create Workspace</DialogTitle>
-              <DialogDescription className="text-zinc-400 text-sm">
-                Give your workspace a name to get started.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-4 space-y-4">
-              <Input
-                value={newWorkspaceName}
-                onChange={(e) => setNewWorkspaceName(e.target.value)}
-                placeholder="My Workspace"
-                className="bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
-                onKeyDown={(e) => { if (e.key === "Enter" && newWorkspaceName.trim()) handleCreateWorkspace() }}
-                autoFocus
-              />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800" onClick={() => { setCreateWorkspaceOpen(false); setNewWorkspaceName("") }}>
-                  Cancel
-                </Button>
-                <Button
-                  className="bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-medium"
-                  onClick={handleCreateWorkspace}
-                  disabled={!newWorkspaceName.trim() || creatingWorkspace}
-                >
-                  {creatingWorkspace ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Share dialog - visibility (public / private / link-only) + copy link */}
-        <Dialog open={shareOpen} onOpenChange={(open) => { setShareOpen(open) }}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),24rem)] sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-zinc-100">Share project</DialogTitle>
-              <DialogDescription className="text-zinc-400 text-sm">
-                Control who can view and edit. Changes sync in real time for people with access.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-4 space-y-4">
-              <div>
-                <p className="text-xs font-medium text-zinc-400 mb-2">Visibility</p>
-                <div className="space-y-2">
-                  {(
-                    [
-                      { value: "private" as const, label: "Private", desc: "Only you (and people you add as editors)" },
-                      { value: "link-only" as const, label: "Link only", desc: "Anyone with the link can view" },
-                      { value: "public" as const, label: "Public", desc: "Anyone can view with the link" },
-                    ] as const
-                  ).map((opt) => (
-                    <label
-                      key={opt.value}
-                      className={cn(
-                        "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors",
-                        shareVisibility === opt.value
-                          ? "border-zinc-600 bg-zinc-800/50"
-                          : "border-zinc-800/60 bg-zinc-900/30 hover:bg-zinc-800/30"
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="visibility"
-                        checked={shareVisibility === opt.value}
-                        onChange={() => setShareVisibility(opt.value)}
-                        className="mt-1 rounded-full border-zinc-600 text-zinc-100 focus:ring-zinc-500"
-                      />
-                      <div>
-                        <span className="text-sm font-medium text-zinc-100">{opt.label}</span>
-                        <p className="text-xs text-zinc-500 mt-0.5">{opt.desc}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-zinc-400 mb-1.5">Project link</p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={projectUrl}
-                    className="flex-1 rounded-lg border border-zinc-700/60 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-300"
-                  />
-                  <Button type="button" size="sm" variant="outline" className="shrink-0 border-zinc-700 text-zinc-300" onClick={handleCopyShareLink}>
-                    {copied ? "Copied" : "Copy"}
-                  </Button>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="ghost" className="text-zinc-400" onClick={() => setShareOpen(false)}>Cancel</Button>
-                <Button type="button" className="bg-zinc-100 text-zinc-900 hover:bg-white border-0" onClick={handleSaveShare} disabled={shareSaving}>
-                  {shareSaving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
-                  Save
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Supabase connect form dialog */}
-        <Dialog open={supabaseConnectOpen} onOpenChange={(open) => { setSupabaseConnectOpen(open); if (!open) { setSupabaseFormUrl(""); setSupabaseFormAnonKey("") } }}>
-          <DialogContent className="bg-zinc-950/98 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[min(calc(100vw-1.5rem),24rem)] sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-zinc-100">Connect Supabase</DialogTitle>
-              <DialogDescription className="text-zinc-400 text-sm">
-                Get your project URL and anon key from Supabase Dashboard → Project Settings → API.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              className="mt-4 space-y-4"
-              onSubmit={async (e) => {
-                e.preventDefault()
-                const url = supabaseFormUrl.trim().replace(/\/$/, "")
-                const anonKey = supabaseFormAnonKey.trim()
-                if (!url || !anonKey) return
-                try {
-                  await handleConnectSupabase(url, anonKey)
-                } catch (err) {
-                  alert(err instanceof Error ? err.message : "Connect failed")
-                }
-              }}
-            >
-              <div>
-                <label className="text-xs font-medium text-zinc-400 block mb-1.5">Project URL</label>
-                <input
-                  type="url"
-                  value={supabaseFormUrl}
-                  onChange={(e) => setSupabaseFormUrl(e.target.value)}
-                  placeholder="https://xxxxx.supabase.co "
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-600"
-                  required
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-zinc-400 block mb-1.5">Anon (public) key</label>
-                <input
-                  type="password"
-                  value={supabaseFormAnonKey}
-                  onChange={(e) => setSupabaseFormAnonKey(e.target.value)}
-                  placeholder="eyJhbG..."
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-600"
-                  required
-                />
-              </div>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button type="button" variant="ghost" className="text-zinc-400" onClick={() => setSupabaseConnectOpen(false)}>Cancel</Button>
-                <Button type="submit" className="bg-zinc-600/20 text-zinc-300 border border-zinc-500/40 hover:bg-zinc-600/30">Connect</Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
-
-        {/* Mobile layout: only in DOM on small screens so desktop layout never shows below. */}
-        {!isLg && (
-        <div className="h-full flex-1 min-h-0 flex flex-col overflow-hidden w-full">
-          {/* Mobile tabs - touch-friendly, modern pill bar */}
-          <div className="px-3 sm:px-4 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 backdrop-blur-sm flex-shrink-0">
-            <div className="flex items-center gap-1.5 rounded-2xl bg-zinc-900/70 border border-zinc-800/60 p-1.5 shadow-inner">
-              <button
-                type="button"
-                onClick={() => setMobileTab("chat")}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 touch-manipulation min-h-[44px]",
-                  mobileTab === "chat"
-                    ? "bg-zinc-800 text-zinc-100 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 active:scale-[0.99]"
-                )}
-              >
-                <MessageSquare className="w-4 h-4 shrink-0" />
-                Chat
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileTab("preview")
-                  setActiveTab("preview")
-                }}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 touch-manipulation min-h-[44px]",
-                  mobileTab === "preview"
-                    ? "bg-zinc-800 text-zinc-100 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 active:scale-[0.99]"
-                )}
-              >
-                <Eye className="w-4 h-4 shrink-0" />
-                Preview
-              </button>
-            </div>
-          </div>
-
-          {/* Mobile content - prevent overflow */}
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            {mobileTab === "chat" ? (
-              <div className="h-full min-h-0 overflow-hidden rounded-b-2xl border border-zinc-800/70 bg-gradient-to-b from-zinc-900/45 to-zinc-950/35">
-                <div className="border-b border-zinc-800/70 px-4 py-3 backdrop-blur-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 w-2 animate-pulse rounded-full bg-zinc-400" />
-                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-400">Agent Session</p>
-                    </div>
-                    <div className="rounded-full border border-zinc-700/70 bg-zinc-800/60 px-2 py-1 text-[10px] text-zinc-400">
-                      Live timeline
-                    </div>
-                  </div>
-                </div>
-                <div className="chat-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 sm:p-5 space-y-4 overscroll-contain">
-                  <ChatMessage
-                    message={{ role: "user", content: project.prompt }}
-                    isLast={false}
-                    onEdit={canEdit ? () => setEditingTarget({ kind: "prompt" }) : undefined}
-                    isEditing={editingTarget?.kind === "prompt"}
-                    onEditSubmit={handleEditSubmit}
-                    onCancelEdit={handleCancelEdit}
-                    projectFiles={project?.files}
-                    setSelectedFile={setSelectedFile}
-                    setActiveTab={setActiveTab}
-                  />
-
-                  {project.messages?.map((msg, i) => (
-                    <ChatMessage
-                      key={i}
-                      message={msg}
-                      isLast={i === project.messages!.length - 1}
-                      onEdit={canEdit && msg.role === "user" ? () => setEditingTarget({ kind: "message", index: i }) : undefined}
-                      isEditing={editingTarget?.kind === "message" && editingTarget.index === i}
-                      onEditSubmit={handleEditSubmit}
-                      onCancelEdit={handleCancelEdit}
-                      projectFiles={project?.files}
-                      setSelectedFile={setSelectedFile}
-                      setActiveTab={setActiveTab}
-                    />
-                  ))}
-
-                  {isGenerating && (
-                    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-3 sm:p-4">
-                      <ThinkingBar
-                        text={agentStatus || "Working on your update"}
-                        steps={runSteps}
-                        isGenerating={isGenerating}
-                        currentFile={currentGeneratingFile}
-                      />
-                    </div>
-                  )}
-
-                  {project.status === "error" && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex gap-3"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-red-900/50 flex items-center justify-center text-red-400 shrink-0">
-                        !
-                      </div>
-                      <div className="flex-1">
-                        <div className="bg-red-900/20 rounded-2xl rounded-tl-sm px-4 py-3 border border-red-800/30">
-                          <p className="text-red-400 text-sm">Error: {project.error || "Generation failed"}</p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="mt-2 border-red-800/50 text-red-400 hover:bg-red-900/20 bg-transparent"
-                            onClick={() => generateCode(project.prompt, project.model)}
-                          >
-                            <RefreshCw className="w-3 h-3 mr-2" />
-                            Retry
-                          </Button>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {canEdit ? (
-                <div className="safe-area-inset-bottom border-t border-zinc-800/50 bg-zinc-950/40 p-3 sm:p-4 backdrop-blur-sm">
-                  <AnimatedAIInput
-                    mode="chat"
-                    compact
-                    isLoading={isGenerating}
-                    placeholder="Ask for changes or describe what to build..."
-                    onSubmit={(value, model) => handleSendMessage(value, model)}
-                    visualEditToggle={{
-                      active: visualEditActive,
-                      onToggle: () => setVisualEditActive((v) => !v),
-                    }}
-                  />
-                </div>
-                ) : (
-                <div className="p-3 sm:p-4 border-t border-zinc-800/50 bg-zinc-950/40 flex-shrink-0">
-                  <p className="text-xs text-zinc-500 text-center">View only — sign in as owner or editor to make changes.</p>
-                </div>
-                )}
-              </div>
-            ) : (
-              <div className="h-full min-h-0 bg-zinc-900 relative rounded-b-lg overflow-hidden flex flex-col">
-                {requiredEnvVars.length > 0 && !envVarsBannerDismissed && (
-                  <div className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-200/90 text-xs">
-                    <span>This app may need API keys or env vars. Add them in Integrations → Vars.</span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2.5 text-[11px] border-amber-500/40 text-amber-200 hover:bg-amber-500/20"
-                        onClick={() => { setIntegrationsOpen(true); setSelectedIntegration("vars") }}
-                      >
-                        <Key className="w-3 h-3 mr-1" /> Add vars
-                      </Button>
-                      <button
-                        type="button"
-                        onClick={() => setEnvVarsBannerDismissed(true)}
-                        className="p-1 rounded hover:bg-amber-500/20 text-amber-200/70"
-                        aria-label="Dismiss"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                  {buildError && canEdit && (
-                    <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2.5 bg-red-950/60 border-b border-red-800/50 text-red-200/90 text-sm">
-                      <span className="truncate flex-1 min-w-0" title={buildError}>
-                        {buildError.length > 80 ? buildError.slice(0, 80) + "…" : buildError}
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="shrink-0 h-8 px-3 text-xs bg-amber-500/20 border-amber-500/50 text-amber-200 hover:bg-amber-500/30 font-medium"
-                        onClick={handleFixWithAI}
-                        disabled={isFixing || isGenerating}
-                      >
-                        {isFixing || isGenerating ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                        ) : (
-                          <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-                        )}
-                        {isFixing ? "Applying AI fix…" : "Fix this error with AI"}
-                      </Button>
-                    </div>
-                  )}
-                  {project.sandboxUrl ? (
-                    <div className="relative flex flex-col flex-1 min-h-0">
-                      <BrowserNavigator
-                        currentPath={previewPath}
-                        onNavigate={handlePreviewNavigate}
-                        onRefresh={handlePreviewReload}
-                        isLoading={isSandboxLoading || isGenerating}
-                        selectedDevice={previewDevice}
-                        onDeviceChange={setPreviewDevice}
-                        className="flex-shrink-0"
-                      />
-                      {(previewRefreshHint || canEdit) && (
-                        <div className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-zinc-900/50 border-b border-zinc-800/50 text-zinc-400 text-xs">
-                          {previewRefreshHint ? <span>{previewRefreshHint}</span> : <span>Not loading? Restart preview below.</span>}
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2.5 text-[11px] border-zinc-600 text-zinc-300 hover:bg-zinc-800"
-                              onClick={handlePreviewReload}
-                            >
-                              <RefreshCw className="w-3 h-3 mr-1" /> Refresh
-                            </Button>
-                            {canEdit && (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2.5 text-[11px] border-amber-500/40 text-amber-200 hover:bg-amber-500/20"
-                                onClick={handleRestartPreview}
-                                disabled={isSandboxLoading}
-                              >
-                                Restart preview
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                      <ResponsivePreview
-                        src={getPreviewUrl() || project.sandboxUrl}
-                        canEdit={canEdit}
-                        enabled={visualEditActive}
-                        onSaveManualEdit={handleManualVisualSave}
-                        isSavingManualEdit={isGenerating}
-                        onIframeNavigate={handlePreviewNavigate}
-                        selectedDevice={previewDevice}
-                        onDeviceChange={setPreviewDevice}
-                        onEditWithAI={(description, userRequest) => {
-                          setMobileTab("chat")
-                          const prompt = userRequest
-                            ? `Edit the selected element in the preview: ${description}. User request: ${userRequest}`
-                            : `Edit the selected element in the preview: ${description}. Make a small improvement.`
-                          handleSendMessage(prompt)
-                        }}
-                        className="w-full flex-1 min-h-0"
-                        iframeKey={previewKey}
-                      />
-                      {hasSuccessfulPreview && (
-                        <div className="flex-shrink-0 border-t border-zinc-800/50 bg-zinc-950/60 px-3 py-2 flex items-center justify-between">
-                          <span className="text-xs text-zinc-400">
-                            Last build: success
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setIsTimelineCollapsed((v) => !v)}
-                            className="text-xs text-zinc-500 hover:text-zinc-300 inline-flex items-center gap-1"
-                          >
-                            {isTimelineCollapsed ? "Show details" : "Hide details"}
-                          </button>
-                        </div>
-                      )}
-                      {hasSuccessfulPreview && !isTimelineCollapsed && !isSandboxLoading && !buildError && (
-                        <BuildTimeline
-                          steps={buildSteps}
-                          error={buildError}
-                          logs={buildLogs}
-                          logsTail={logsTail}
-                          timer={buildTimer}
-                          failureCategory={buildFailureCategory}
-                          failureReason={buildFailureReason}
-                          onRetry={canEdit ? () => project.files && createSandbox(project.files) : undefined}
-                          onFixWithAI={canEdit ? handleFixWithAI : undefined}
-                          isFixing={isFixing}
-                        />
-                      )}
                     </div>
                   ) : (
-                    <div className="relative flex-1 min-h-0">
-                      {(isSandboxLoading || isGenerating || buildError) ? (
-                        <div className="h-full bg-zinc-950 flex items-center justify-center">
-                          <BuildTimeline
-                            steps={buildSteps}
-                            error={buildError}
-                            logs={buildLogs}
-                            logsTail={logsTail}
-                            timer={buildTimer}
-                            failureCategory={buildFailureCategory}
-                            failureReason={buildFailureReason}
-                            onRetry={canEdit ? () => project.files && createSandbox(project.files) : undefined}
-                            onFixWithAI={canEdit ? handleFixWithAI : undefined}
-                            isFixing={isFixing}
-                          />
-                        </div>
-                      ) : (
-                        <div className="h-full bg-zinc-950 flex items-center justify-center p-4 sm:p-6 overflow-auto">
-                          <div className="w-full max-w-lg rounded-2xl border border-zinc-800/80 bg-zinc-900/50 backdrop-blur-sm p-4 sm:p-6 shadow-xl">
-                            <div className="flex items-start gap-3 sm:gap-4">
-                              <div className="w-10 h-10 shrink-0 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-                                <Eye className="w-5 h-5 text-zinc-300" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium text-zinc-100">Preview not running yet</div>
-                                <div className="text-xs text-zinc-500 mt-1">
-                                  Generate your project to start a live preview. When the build completes, it will appear here automatically.
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="mt-4 flex items-center gap-2">
-                              <div className="flex-1 min-w-0 rounded-lg border border-zinc-800/50 bg-zinc-900/50 backdrop-blur-sm px-3 py-2 text-xs text-zinc-400 font-medium truncate">
-                                {project.files?.length ? `${project.files.length} files ready` : "No files generated yet"}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
+                    <div
+                      className={cn(
+                        "rounded-2xl px-4 py-3 text-sm leading-relaxed transition-colors",
+                        msg.role === "user"
+                          ? "bg-[#1f1f1f] text-white"
+                          : "bg-zinc-100 text-zinc-800"
                       )}
+                    >
+                      {msg.content}
+                    </div>
+                  )}
+
+                  {msg.role === "user" && !(editingTarget?.kind === "message" && editingTarget.index === i) && canEdit && (
+                    <div className="mt-1 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingTarget({ kind: "message", index: i })
+                          setEditingDraft(msg.content)
+                        }}
+                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 text-xs text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-100 group-hover:opacity-100"
+                      >
+                        <Edit2 className="h-3 w-3" />
+                        Edit
+                      </button>
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-        )}
-
-        {/* Desktop layout: only in DOM on lg+ so mobile never sees duplicate content. */}
-        {isLg && (
-        <ResizablePanelGroup direction="horizontal" className="h-full flex-1 min-h-0 w-full min-w-0">
-          {/* Chat Panel - modern glass */}
-          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-            <div className="h-full flex flex-col border-r border-zinc-800/50 bg-gradient-to-b from-zinc-900/45 to-zinc-950/35 backdrop-blur-sm">
-              <div className="border-b border-zinc-800/70 px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 w-2 animate-pulse rounded-full bg-zinc-400" />
-                    <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">Agent Session</span>
-                  </div>
-                  <span className="rounded-full border border-zinc-700/70 bg-zinc-800/60 px-2 py-1 text-[10px] text-zinc-400">
-                    Live timeline
-                  </span>
-                </div>
-              </div>
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 chat-scrollbar">
-                {/* Initial prompt */}
-                <ChatMessage
-                  message={{ role: "user", content: project.prompt }}
-                  isLast={false}
-                  onEdit={canEdit ? () => setEditingTarget({ kind: "prompt" }) : undefined}
-                  isEditing={editingTarget?.kind === "prompt"}
-                  onEditSubmit={handleEditSubmit}
-                  onCancelEdit={handleCancelEdit}
-                  projectFiles={project?.files}
-                  setSelectedFile={setSelectedFile}
-                  setActiveTab={setActiveTab}
-                />
-
-                {/* Messages history */}
-                {project.messages?.map((msg, i) => (
-                  <ChatMessage
-                    key={i}
-                    message={msg}
-                    isLast={i === project.messages!.length - 1}
-                    onEdit={canEdit && msg.role === "user" ? () => setEditingTarget({ kind: "message", index: i }) : undefined}
-                    isEditing={editingTarget?.kind === "message" && editingTarget.index === i}
-                    onEditSubmit={handleEditSubmit}
-                    onCancelEdit={handleCancelEdit}
-                    projectFiles={project?.files}
-                    setSelectedFile={setSelectedFile}
-                    setActiveTab={setActiveTab}
+              ))}
+              {isGenerating && (
+                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                  <ThinkingBar
+                    text={agentStatus || "Making updates"}
+                    steps={runSteps}
+                    isGenerating={isGenerating}
+                    currentFile={currentGeneratingFile}
                   />
-                ))}
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
 
-                {/* Thinking bar + reasoning (agent-like) */}
-                {isGenerating && (
-                  <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/55 p-4">
-                    <ThinkingBar
-                      text={agentStatus || "Working on your update"}
-                      steps={runSteps}
-                      isGenerating={isGenerating}
-                      currentFile={currentGeneratingFile}
-                    />
-                  </div>
-                )}
-
-                {project.status === "error" && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex gap-3"
-                  >
-                    <div className="w-8 h-8 rounded-full bg-red-900/50 flex items-center justify-center text-red-400 shrink-0">
-                      !
-                    </div>
-                    <div className="flex-1">
-                      <div className="bg-red-900/20 rounded-2xl rounded-tl-sm px-4 py-3 border border-red-800/30">
-                        <p className="text-red-400 text-sm">Error: {project.error || "Generation failed"}</p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-2 border-red-800/50 text-red-400 hover:bg-red-900/20 bg-transparent"
-                          onClick={() => generateCode(project.prompt, project.model)}
-                        >
-                          <RefreshCw className="w-3 h-3 mr-2" />
-                          Retry
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Chat Input - only when user can edit */}
-              {canEdit ? (
-              <div className="p-3 border-t border-zinc-800/50 bg-zinc-950/30 backdrop-blur-sm flex-shrink-0">
+            {canEdit ? (
+              <div className="border-t border-zinc-100 p-2.5 sm:p-3">
+                <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {contextualChips.map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => handleSendMessage(chip)}
+                      disabled={!canEdit || isGenerating}
+                      className="whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
                 <AnimatedAIInput
                   mode="chat"
                   compact
                   isLoading={isGenerating}
-                  placeholder="Ask for changes or describe what to build..."
+                  placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
                   onSubmit={(value, model) => handleSendMessage(value, model)}
                   visualEditToggle={{
                     active: visualEditActive,
@@ -3851,279 +2264,217 @@ function ProjectContent() {
                   }}
                 />
               </div>
-              ) : (
-              <div className="p-3 border-t border-zinc-800/50 bg-zinc-950/30 flex-shrink-0">
-                <p className="text-xs text-zinc-500 text-center">View only — sign in as owner or editor to make changes.</p>
-              </div>
-              )}
-            </div>
-          </ResizablePanel>
+            ) : (
+              <div className="border-t border-zinc-100 p-3 text-center text-xs text-zinc-500">View only</div>
+            )}
+          </section>
 
-<ResizableHandle className="w-1 bg-zinc-800/50 hover:bg-zinc-700 transition-colors hover:shadow-md" />
-
-          {/* Preview/Code Panel */}
-          <ResizablePanel defaultSize={70}>
-            <div className="h-full flex flex-col">
-              <div className="h-14 border-b border-zinc-800/50 bg-gradient-to-b from-zinc-900/80 to-zinc-950/60 backdrop-blur-md flex items-center justify-between px-4 shadow-sm">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="flex items-center gap-1 rounded-xl bg-zinc-900/40 border border-zinc-800/50 p-1 shadow-sm">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("preview")}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all duration-200",
-                        activeTab === "preview"
-                          ? "bg-zinc-800 text-zinc-100 shadow-sm"
-                          : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
-                      )}
-                    >
-                      <Eye className="w-4 h-4" />
-                      Preview
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("code")}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all duration-200",
-                        activeTab === "code"
-                          ? "bg-zinc-800 text-zinc-100 shadow-sm"
-                          : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
-                      )}
-                    >
-                      <Code2 className="w-4 h-4" />
-                      Code
-                      {displayFiles.length > 0 && (
-                        <span className="ml-1 px-1.5 py-0.5 bg-zinc-700/50 rounded text-xs">
-                          {displayFiles.length}
-                        </span>
-                      )}
-                    </button>
-                  </div>
-
-                  {activeTab === "preview" && <div className="hidden md:flex items-center gap-2 min-w-0" />}
+          <section className={cn(
+            "min-h-[56vh] overflow-hidden border border-zinc-200 bg-white lg:col-span-7 lg:min-h-0",
+            mobileTab !== "preview" && "hidden lg:block"
+          )}>
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 sm:px-5 sm:py-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold tracking-wide text-zinc-800">Live Website</p>
+                  <p className="mt-1 truncate text-xs text-zinc-500">Select a section in the preview to edit with context.</p>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  {activeTab === "code" && selectedFile && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-zinc-400 hover:text-zinc-100 h-8 w-8 p-0 hover:bg-zinc-900"
-                      onClick={copyCode}
-                    >
-                      {copied ? <Check className="w-4 h-4 text-zinc-300" /> : <Copy className="w-4 h-4" />}
-                    </Button>
-                  )}
-                  {activeTab === "preview" && project.sandboxUrl && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-zinc-400 hover:text-zinc-100 h-8 w-8 p-0 hover:bg-zinc-900"
-                      onClick={() => window.open(project.sandboxUrl, "_blank")}
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </Button>
-                  )}
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100 lg:hidden" onClick={() => setWebsiteSettingsOpen(true)}>
+                    Website Settings
+                  </Button>
+                  <Button type="button" size="sm" className="h-9 rounded-lg bg-[#1f1f1f] px-3 text-white hover:bg-black lg:hidden" onClick={() => setDeployOpen(true)}>
+                    Go Live
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100" onClick={handlePreviewReload}>
+                    Refresh
+                  </Button>
                 </div>
               </div>
-
-              {/* Content */}
-              <div className="flex-1 overflow-hidden">
-                {activeTab === "preview" ? (
-                  <div className="h-full bg-gradient-to-b from-zinc-900 to-zinc-950 relative flex flex-col">
-                    {requiredEnvVars.length > 0 && !envVarsBannerDismissed && (
-                      <div className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-200/90 text-xs">
-                        <span>This app may need API keys or env vars. Add them in Integrations → Vars.</span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-[11px] border-amber-500/40 text-amber-200 hover:bg-amber-500/20"
-                            onClick={() => { setIntegrationsOpen(true); setSelectedIntegration("vars") }}
-                          >
-                            <Key className="w-3 h-3 mr-1" /> Add vars
-                          </Button>
-                          <button
-                            type="button"
-                            onClick={() => setEnvVarsBannerDismissed(true)}
-                            className="p-1 rounded hover:bg-amber-500/20 text-amber-200/70"
-                            aria-label="Dismiss"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                {((isSandboxLoading || !!buildError) && !isTimelineCollapsed) && (
+                  <BuildTimeline
+                    className="p-4 sm:p-6"
+                    steps={buildSteps}
+                    error={buildError}
+                    logs={buildLogs}
+                    logsTail={logsTail}
+                    timer={buildTimer}
+                    failureCategory={buildFailureCategory}
+                    failureReason={fixingMessage || buildFailureReason}
+                    onFixWithAI={handleFixWithAI}
+                    isFixing={isFixing}
+                  />
+                )}
+                {resolvedPreviewUrl ? (
+                  <ResponsivePreview
+                    src={resolvedPreviewUrl}
+                    canEdit={canEdit}
+                    enabled={visualEditActive}
+                    onSaveManualEdit={handleManualVisualSave}
+                    isSavingManualEdit={isGenerating}
+                    onIframeNavigate={handlePreviewNavigate}
+                    selectedDevice={previewDevice}
+                    onDeviceChange={setPreviewDevice}
+                    onEditWithAI={(description, userRequest) => {
+                      setEditingContextLabel(describeEditingContext(description))
+                      const prompt = userRequest
+                        ? `Update this website section (${description}): ${userRequest}`
+                        : `Improve this website section (${description}) with a premium, founder-focused tone.`
+                      handleSendMessage(prompt)
+                    }}
+                    className="h-full w-full"
+                    iframeKey={previewKey}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center px-5 text-center sm:px-8">
+                    {(isPreparingPreview || (project?.status === "complete" && (project?.files?.length || 0) > 0 && previewEnsureFailures < 2)) ? (
+                      <div className="flex flex-col items-center">
+                        <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+                        <p className="mt-3 text-base font-medium text-zinc-800">Waking up your preview environment...</p>
+                        <p className="mt-1 text-sm text-zinc-500">Preparing your live preview...</p>
+                      </div>
+                    ) : previewEnsureFailures >= 2 ? (
+                      <div>
+                        <p className="text-lg font-semibold text-zinc-800">Preview is temporarily unavailable</p>
+                        <p className="mt-2 text-sm text-zinc-500">Please check your connection and try again.</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-lg font-semibold text-zinc-800">Your website preview will appear here</p>
+                        <p className="mt-2 text-sm text-zinc-500">Ask for an update to generate your live website.</p>
                       </div>
                     )}
-                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                      {buildError && canEdit && (
-                        <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2.5 bg-red-950/60 border-b border-red-800/50 text-red-200/90 text-sm">
-                          <span className="truncate flex-1 min-w-0" title={buildError}>
-                            {buildError.length > 80 ? buildError.slice(0, 80) + "…" : buildError}
-                          </span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="shrink-0 h-8 px-3 text-xs bg-amber-500/20 border-amber-500/50 text-amber-200 hover:bg-amber-500/30 font-medium"
-                            onClick={handleFixWithAI}
-                            disabled={isFixing || isGenerating}
-                          >
-                            {isFixing || isGenerating ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                            ) : (
-                              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-                            )}
-                            {isFixing ? "Applying AI fix…" : "Fix this error with AI"}
-                          </Button>
-                        </div>
-                      )}
-                      {project.sandboxUrl ? (
-                        <div className="relative flex flex-col flex-1 min-h-0">
-                          <BrowserNavigator
-                            currentPath={previewPath}
-                            onNavigate={handlePreviewNavigate}
-                            onRefresh={handlePreviewReload}
-                            isLoading={isSandboxLoading || isGenerating}
-                            selectedDevice={previewDevice}
-                            onDeviceChange={setPreviewDevice}
-                            className="flex-shrink-0"
-                          />
-                          {(previewRefreshHint || canEdit) && (
-                            <div className="flex-shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-zinc-900/50 border-b border-zinc-800/50 text-zinc-400 text-xs">
-                              {previewRefreshHint ? <span>{previewRefreshHint}</span> : <span>Seeing &quot;Closed Port&quot; or connection refused? Click Refresh or restart preview below.</span>}
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2.5 text-[11px] border-zinc-600 text-zinc-300 hover:bg-zinc-800"
-                                  onClick={handlePreviewReload}
-                                >
-                                  <RefreshCw className="w-3 h-3 mr-1" /> Refresh
-                                </Button>
-                                {canEdit && (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 px-2.5 text-[11px] border-amber-500/40 text-amber-200 hover:bg-amber-500/20"
-                                    onClick={handleRestartPreview}
-                                    disabled={isSandboxLoading}
-                                  >
-                                    Restart preview
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          <ResponsivePreview
-                            src={getPreviewUrl() || project.sandboxUrl}
-                            canEdit={canEdit}
-                            enabled={visualEditActive}
-                            onSaveManualEdit={handleManualVisualSave}
-                            isSavingManualEdit={isGenerating}
-                            onIframeNavigate={handlePreviewNavigate}
-                            selectedDevice={previewDevice}
-                            onDeviceChange={setPreviewDevice}
-                            onEditWithAI={(description, userRequest) => {
-                              const prompt = userRequest
-                                ? `Edit the selected element in the preview: ${description}. User request: ${userRequest}`
-                                : `Edit the selected element in the preview: ${description}. Make a small improvement.`
-                              handleSendMessage(prompt)
-                            }}
-                            className="w-full flex-1 min-h-0"
-                            iframeKey={previewKey}
-                          />
-                          {hasSuccessfulPreview && (
-                            <div className="flex-shrink-0 border-t border-zinc-800/50 bg-zinc-950/60 px-3 py-2 flex items-center justify-between">
-                              <span className="text-xs text-zinc-400">
-                                Last build: success
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setIsTimelineCollapsed((v) => !v)}
-                                className="text-xs text-zinc-500 hover:text-zinc-300 inline-flex items-center gap-1"
-                              >
-                                {isTimelineCollapsed ? "Show details" : "Hide details"}
-                              </button>
-                            </div>
-                          )}
-                          {hasSuccessfulPreview && !isTimelineCollapsed && !isSandboxLoading && !buildError && !allBuildSuccess && (
-                            <BuildTimeline
-                              steps={buildSteps}
-                              error={buildError}
-                              logs={buildLogs}
-                              logsTail={logsTail}
-                              timer={buildTimer}
-                              failureCategory={buildFailureCategory}
-                              failureReason={buildFailureReason}
-                              onRetry={canEdit ? () => project.files && createSandbox(project.files) : undefined}
-                              onFixWithAI={canEdit ? handleFixWithAI : undefined}
-                              isFixing={isFixing}
-                            />
-                          )}
-                        </div>
-                      ) : (
-                        <div className="relative flex-1 min-h-0">
-                          {(isSandboxLoading || isGenerating || buildError) ? (
-                            <div className="h-full bg-zinc-950 flex items-center justify-center">
-                              <BuildTimeline
-                                steps={buildSteps}
-                                error={buildError}
-                                logs={buildLogs}
-                                logsTail={logsTail}
-                                timer={buildTimer}
-                                failureCategory={buildFailureCategory}
-                                failureReason={buildFailureReason}
-                                onRetry={canEdit ? () => project.files && createSandbox(project.files) : undefined}
-                                onFixWithAI={canEdit ? handleFixWithAI : undefined}
-                                isFixing={isFixing}
-                              />
-                            </div>
-                          ) : (
-                            <div className="h-full bg-gradient-to-b from-zinc-950 to-zinc-900 flex items-center justify-center p-6">
-                              <div className="w-full max-w-lg rounded-2xl border border-zinc-800/50 bg-zinc-900/60 backdrop-blur-sm p-6 shadow-lg hover:shadow-xl transition-shadow duration-300">
-                                <div className="flex items-start gap-4">
-                                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700/50 flex items-center justify-center shadow-sm">
-                                    <Eye className="w-5 h-5 text-zinc-300" />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-medium text-zinc-100">Preview not running yet</div>
-                                    <div className="text-xs text-zinc-500 mt-1">
-                                      Generate your project to start a live preview. When the build completes, it will appear here automatically.
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="mt-4 flex items-center gap-2">
-                                  <div className="flex-1 rounded-lg border border-zinc-800/50 bg-zinc-900/50 backdrop-blur-sm px-3 py-2 text-xs text-zinc-400 font-medium">
-                                    {project.files?.length ? `${project.files.length} files ready` : "No files generated yet"}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
                   </div>
-                ) : (
-                  <CodePanel
-                    files={displayFiles}
-                    selectedFile={selectedFile}
-                    onSelectFile={setSelectedFile}
-                    isGenerating={isGenerating}
-                  />
                 )}
               </div>
             </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-        )}
+          </section>
+        </div>
       </div>
+
+      <Dialog open={deployOpen} onOpenChange={setDeployOpen}>
+        <DialogContent className="max-w-md border-zinc-200 bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-zinc-900">Go Live</DialogTitle>
+            <DialogDescription className="text-zinc-600">Publish your website and share it with customers.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+              <p className="text-xs uppercase tracking-wider text-zinc-500">Netlify</p>
+              {deployLinks?.siteUrl ? (
+                <a href={deployLinks.siteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-black">
+                  {deployLinks.siteUrl}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ) : (
+                <p className="mt-1 text-sm text-zinc-500">Not published yet.</p>
+              )}
+              <Button
+                type="button"
+                className="mt-3 w-full bg-[#1f1f1f] text-white hover:bg-black"
+                onClick={handleDeployToNetlify}
+                disabled={isDeploying}
+              >
+                {isDeploying ? "Publishing..." : deployLinks?.siteUrl ? "Republish with Netlify" : "Publish with Netlify"}
+              </Button>
+              {(isDeploying || deployLogs.length > 0 || deployStep) && (
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-2">
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-wider text-zinc-500">Build Log</p>
+                    {deployStep ? <p className="text-[11px] text-zinc-500">Step: {deployStep}</p> : null}
+                  </div>
+                  <div className="max-h-36 overflow-auto rounded-md bg-zinc-50 p-2 text-[11px] leading-5 text-zinc-700">
+                    {deployLogs.length === 0 ? (
+                      <p className="text-zinc-500">Starting publish...</p>
+                    ) : (
+                      deployLogs.slice(-120).map((line, i) => (
+                        <p key={`netlify-log-${i}`} className="whitespace-pre-wrap break-words">
+                          {line}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+              <p className="text-xs uppercase tracking-wider text-zinc-500">Vercel</p>
+              {vercelDeployLinks?.siteUrl ? (
+                <a href={vercelDeployLinks.siteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-black">
+                  {vercelDeployLinks.siteUrl}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ) : (
+                <p className="mt-1 text-sm text-zinc-500">Not published yet.</p>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 w-full border-zinc-300 text-zinc-700"
+                onClick={handleDeployToVercel}
+                disabled={isVercelDeploying}
+              >
+                {isVercelDeploying ? "Publishing..." : vercelDeployLinks?.siteUrl ? "Republish with Vercel" : "Publish with Vercel"}
+              </Button>
+              {(isVercelDeploying || vercelDeployLogs.length > 0 || vercelDeployStep) && (
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-2">
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-wider text-zinc-500">Build Log</p>
+                    {vercelDeployStep ? <p className="text-[11px] text-zinc-500">Step: {vercelDeployStep}</p> : null}
+                  </div>
+                  <div className="max-h-36 overflow-auto rounded-md bg-zinc-50 p-2 text-[11px] leading-5 text-zinc-700">
+                    {vercelDeployLogs.length === 0 ? (
+                      <p className="text-zinc-500">Starting publish...</p>
+                    ) : (
+                      vercelDeployLogs.slice(-120).map((line, i) => (
+                        <p key={`vercel-log-${i}`} className="whitespace-pre-wrap break-words">
+                          {line}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {(deployError || vercelDeployError) && (
+              <p className="text-xs text-red-600">{deployError || vercelDeployError}</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Sheet open={websiteSettingsOpen} onOpenChange={setWebsiteSettingsOpen}>
+        <SheetContent side="right" className="w-full max-w-[760px] overflow-y-auto border-l border-zinc-200 bg-[#f5f5f2] p-0 sm:max-w-[760px]">
+          <SheetHeader className="border-b border-zinc-200 bg-white px-6 py-5">
+            <SheetTitle className="text-zinc-900">Website Settings</SheetTitle>
+            <SheetDescription className="text-zinc-500">Configure your website experience for this project.</SheetDescription>
+          </SheetHeader>
+          <div className="p-6">
+              <WebsiteSettingsPanel
+                projectId={projectId}
+                initialSettings={project?.websiteSettings}
+                projectName={displayProjectName}
+                projectFiles={project?.files}
+                databaseIntegration={{
+                  provider: "supabase",
+                connected: !!project?.supabaseProjectRef,
+                projectRef: project?.supabaseProjectRef,
+                projectUrl: project?.supabaseUrl,
+              }}
+              githubIntegration={{
+                repoFullName: project?.githubRepoFullName,
+              }}
+              onSaved={(next) => setProject((prev) => (prev ? { ...prev, websiteSettings: next } : prev))}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
+
 }
 
 export default function ProjectPage() {
@@ -4133,3 +2484,4 @@ export default function ProjectPage() {
     </ProjectErrorBoundary>
   )
 }
+

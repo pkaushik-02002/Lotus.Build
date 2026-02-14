@@ -1,82 +1,144 @@
 "use client"
 
 import { Sparkles } from "lucide-react"
-import { motion } from "motion/react"
+import { motion, cubicBezier } from "motion/react"
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
 import { PromptSuggestion } from "@/components/prompt-kit/prompt-suggestion"
 
+const container = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.1, delayChildren: 0.2 },
+  },
+}
+
+const item = {
+  hidden: { opacity: 0, y: 20, filter: "blur(4px)" },
+  show: {
+    opacity: 1,
+    y: 0,
+    filter: "blur(0px)",
+    transition: { duration: 0.6, ease: cubicBezier(0.22, 1, 0.36, 1) },
+  },
+}
+
+const suggestions = [
+  "Build a SaaS landing page",
+  "Task management app",
+  "E-commerce store",
+  "Blog with markdown",
+]
+
 export function HeroSection() {
-  // Function to set input value and focus the textarea
   const handleSuggestionClick = (suggestion: string) => {
-    // Find the textarea element and set its value
     setTimeout(() => {
-      const textarea = document.querySelector('#ai-input-hero') as HTMLTextAreaElement
+      const textarea = document.querySelector(
+        "#ai-input-hero"
+      ) as HTMLTextAreaElement
       if (textarea) {
         textarea.value = suggestion
         textarea.focus()
-        // Trigger the input event to update the AnimatedAIInput component
-        const event = new Event('input', { bubbles: true })
+        const event = new Event("input", { bubbles: true })
         textarea.dispatchEvent(event)
       }
     }, 100)
   }
 
-  const suggestions = [
-    "Build a SaaS landing page",
-    "Task management app",
-    "E-commerce store",
-    "Blog with markdown",
-  ]
-
   return (
-    <section className="relative flex min-h-screen items-center px-4 pb-20 pt-28 sm:px-6 lg:px-8">
-      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-b from-zinc-900/60 via-transparent to-transparent" />
+    <section className="relative flex min-h-[100dvh] items-center overflow-hidden px-4 pb-16 pt-24 sm:px-6 sm:pb-20 sm:pt-28 lg:px-8">
+      {/* ── Background layers ── */}
+
+      {/* ── Animated ambient orbs ── */}
+
+      {/* ── Main card ── */}
       <div className="relative z-10 mx-auto w-full max-w-6xl">
         <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-          className="relative overflow-hidden rounded-[2rem] border border-zinc-800/70 bg-zinc-900/40 px-5 py-10 shadow-[0_20px_80px_-40px_rgba(0,0,0,0.8)] backdrop-blur-xl sm:px-8 sm:py-14 lg:px-14 lg:py-16"
+          initial={{ opacity: 0, y: 24, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+          className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white px-5 py-10 shadow-sm sm:rounded-3xl sm:px-10 sm:py-14 lg:px-16 lg:py-20"
         >
-          <div aria-hidden className="pointer-events-none absolute -left-24 top-0 h-64 w-64 rounded-full bg-zinc-300/10 blur-3xl" />
-          <div aria-hidden className="pointer-events-none absolute -right-24 bottom-0 h-64 w-64 rounded-full bg-zinc-400/10 blur-3xl" />
+          {/* Inner highlight border */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-px rounded-[inherit] ring-1 ring-inset ring-white/[.04]"
+          />
 
-          <div className="relative mx-auto flex w-full max-w-4xl flex-col items-center text-center">
-            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/80 px-4 py-2">
-              <Sparkles className="h-4 w-4 text-zinc-400" />
-              <span className="text-sm text-zinc-400">AI powered full-stack application builder </span>
-            </div>
+          {/* Subtle top‑edge shine */}
 
-            <h1 className="mb-6 font-display text-4xl font-bold tracking-tight sm:text-6xl lg:text-7xl">
-              <span className="block text-zinc-100">Describe your idea.</span>
-              <span className="bg-gradient-to-r from-zinc-500 via-zinc-300 to-zinc-500 bg-clip-text text-transparent">
+          {/* ── Content ── */}
+          <motion.div
+            variants={container}
+            initial="hidden"
+            animate="show"
+            className="relative mx-auto flex w-full max-w-3xl flex-col items-center text-center"
+          >
+            {/* Badge */}
+            <motion.div variants={item}>
+              <span className="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-300 bg-zinc-100 px-4 py-1.5 shadow-sm">
+                <Sparkles className="h-3.5 w-3.5 text-zinc-600" />
+                <span className="text-xs font-medium tracking-wide text-zinc-600 sm:text-sm">
+                  AI powered full-stack application builder
+                </span>
+              </span>
+            </motion.div>
+
+            {/* Headline */}
+            <motion.h1
+              variants={item}
+              className="mb-5 mt-2 font-display text-[2.25rem] font-bold leading-[1.1] tracking-tight sm:text-5xl md:text-6xl lg:text-7xl"
+            >
+              <span className="block text-zinc-900">Describe your idea.</span>
+              <span className="mt-1 block text-zinc-700 sm:mt-2">
                 We build it.
               </span>
-            </h1>
+            </motion.h1>
 
-            <p className="mb-8 max-w-2xl text-base leading-relaxed text-zinc-500 text-balance sm:text-lg md:text-xl">
-              Turn your ideas into full-stack web applications with AI. Just describe what you want to build and watch your
-              app come to life in seconds.
-            </p>
+            {/* Subheadline */}
+            <motion.p
+              variants={item}
+              className="mb-10 max-w-xl text-pretty text-sm leading-relaxed text-zinc-500 sm:max-w-2xl sm:text-base md:text-lg lg:text-xl"
+            >
+              Turn your ideas into full-stack web applications with AI. Just
+              describe what you want to build and watch your app come to life in
+              seconds.
+            </motion.p>
 
-            <AnimatedAIInput />
+            {/* Input */}
+            <motion.div variants={item} className="flex w-full justify-center">
+              <AnimatedAIInput />
+            </motion.div>
 
-            <div className="mt-6 w-full max-w-3xl">
-              <div className="scrollbar-hidden flex flex-row flex-nowrap items-center justify-start gap-2 overflow-x-auto pb-2 sm:justify-center">
+            {/* Suggestions */}
+            <motion.div variants={item} className="mt-5 w-full sm:mt-6">
+              <div className="scrollbar-hidden -mx-1 flex flex-row flex-nowrap items-center justify-start gap-2 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:justify-center">
                 {suggestions.map((suggestion, index) => (
-                  <PromptSuggestion
+                  <motion.div
                     key={index}
-                    onClick={() => handleSuggestionClick(suggestion)}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{
+                      delay: 0.7 + index * 0.08,
+                      duration: 0.4,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
                     className="shrink-0"
                   >
-                    {suggestion}
-                  </PromptSuggestion>
+                    <PromptSuggestion
+                      onClick={() => handleSuggestionClick(suggestion)}
+                    >
+                      {suggestion}
+                    </PromptSuggestion>
+                  </motion.div>
                 ))}
               </div>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         </motion.div>
       </div>
     </section>
   )
 }
+
+

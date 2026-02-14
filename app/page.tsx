@@ -11,15 +11,7 @@ export default function Home() {
   return (
     <LenisProvider>
       <CreateAfterLogin />
-      <main className="relative min-h-screen overflow-hidden bg-zinc-950">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.07),transparent_35%),radial-gradient(circle_at_80%_0%,rgba(255,255,255,0.06),transparent_30%)]"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-30 [background:linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:60px_60px]"
-        />
+      <main className="relative min-h-screen overflow-hidden bg-[#f5f5f2]">
         <Navbar />
         <HeroSection />
         <ImpactSection />
@@ -30,3 +22,4 @@ export default function Home() {
     </LenisProvider>
   )
 }
+

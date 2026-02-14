@@ -44,23 +44,23 @@ const faqs = [
 
 export default function HelpPage() {
   return (
-    <main className="min-h-screen bg-zinc-950">
+    <main className="min-h-screen bg-[#f5f5f2]">
       <Navbar />
       <div className="pt-24 pb-16 px-4 sm:px-6 lg:px-8 safe-area-inset-top">
         <div className="max-w-3xl mx-auto">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-10"
+            className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-700 transition-colors mb-10"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to home
           </Link>
 
           <div className="mb-12 sm:mb-14">
-            <div className="w-12 h-12 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4">
-              <HelpCircle className="w-6 h-6 text-zinc-400" />
+            <div className="w-12 h-12 rounded-xl bg-white border border-zinc-200 flex items-center justify-center mb-4">
+              <HelpCircle className="w-6 h-6 text-zinc-600" />
             </div>
-            <h1 className="font-display text-2xl sm:text-3xl md:text-4xl font-bold text-zinc-100 mb-2">
+            <h1 className="font-display text-2xl sm:text-3xl md:text-4xl font-bold text-zinc-900 mb-2">
               Help & Support
             </h1>
             <p className="text-zinc-500 text-base sm:text-lg">
@@ -70,16 +70,16 @@ export default function HelpPage() {
 
           {/* FAQ */}
           <section className="mb-14 sm:mb-16">
-            <h2 className="font-heading text-lg font-semibold text-zinc-100 mb-6">Frequently asked questions</h2>
-            <div className="rounded-2xl border border-zinc-800/50 bg-zinc-900/50 overflow-hidden">
+            <h2 className="font-heading text-lg font-semibold text-zinc-900 mb-6">Frequently asked questions</h2>
+            <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
               <Accordion type="single" collapsible className="w-full">
                 {faqs.map((faq, i) => (
                   <AccordionItem
                     key={i}
                     value={`faq-${i}`}
-                    className="border-b border-zinc-800/50 last:border-b-0 px-4 sm:px-6"
+                    className="border-b border-zinc-200 last:border-b-0 px-4 sm:px-6"
                   >
-                    <AccordionTrigger className="py-4 sm:py-5 text-left text-sm font-medium text-zinc-100 hover:text-zinc-100 hover:no-underline [&>svg]:text-zinc-500">
+                    <AccordionTrigger className="py-4 sm:py-5 text-left text-sm font-medium text-zinc-900 hover:text-zinc-900 hover:no-underline [&>svg]:text-zinc-500">
                       {faq.q}
                     </AccordionTrigger>
                     <AccordionContent className="text-sm text-zinc-500 pb-4 sm:pb-5 pt-0">
@@ -95,13 +95,13 @@ export default function HelpPage() {
           <section className="grid sm:grid-cols-2 gap-4 sm:gap-6">
             <Link
               href="mailto:support@buildkit.example.com"
-              className="rounded-2xl border border-zinc-800/50 bg-zinc-900/50 p-5 sm:p-6 hover:bg-zinc-800/50 hover:border-zinc-700/50 transition-colors group"
+              className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 hover:bg-zinc-100 hover:border-zinc-300 transition-colors group"
             >
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center group-hover:bg-zinc-700/50 transition-colors">
-                  <Mail className="w-5 h-5 text-zinc-400" />
+                <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center group-hover:bg-zinc-700/50 transition-colors">
+                  <Mail className="w-5 h-5 text-zinc-600" />
                 </div>
-                <h3 className="font-heading font-semibold text-zinc-100">Email support</h3>
+                <h3 className="font-heading font-semibold text-zinc-900">Email support</h3>
               </div>
               <p className="text-sm text-zinc-500">
                 Send us an email and we&apos;ll get back within 24 hours.
@@ -109,13 +109,13 @@ export default function HelpPage() {
             </Link>
             <Link
               href="/pricing"
-              className="rounded-2xl border border-zinc-800/50 bg-zinc-900/50 p-5 sm:p-6 hover:bg-zinc-800/50 hover:border-zinc-700/50 transition-colors group"
+              className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 hover:bg-zinc-100 hover:border-zinc-300 transition-colors group"
             >
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center group-hover:bg-zinc-700/50 transition-colors">
-                  <BookOpen className="w-5 h-5 text-zinc-400" />
+                <div className="w-10 h-10 rounded-xl bg-zinc-100 border border-zinc-300 flex items-center justify-center group-hover:bg-zinc-700/50 transition-colors">
+                  <BookOpen className="w-5 h-5 text-zinc-600" />
                 </div>
-                <h3 className="font-heading font-semibold text-zinc-100">Plans & pricing</h3>
+                <h3 className="font-heading font-semibold text-zinc-900">Plans & pricing</h3>
               </div>
               <p className="text-sm text-zinc-500">
                 Compare plans and upgrade for more tokens and features.
@@ -126,7 +126,7 @@ export default function HelpPage() {
           <div className="mt-10 text-center">
             <p className="text-sm text-zinc-500 mb-4">Need help with your account?</p>
             <Link href="/settings">
-              <Button variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+              <Button variant="outline" className="border-zinc-300 text-zinc-700 hover:bg-zinc-100">
                 Open Settings
               </Button>
             </Link>
@@ -137,3 +137,4 @@ export default function HelpPage() {
     </main>
   )
 }
+
