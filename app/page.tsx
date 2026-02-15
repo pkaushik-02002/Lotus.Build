@@ -104,13 +104,13 @@ export default function Home() {
         </section>
 
         <section id="features" className="relative px-4 py-10 sm:px-6 sm:py-12 lg:px-8">
-          <div className="mx-auto flex max-w-6xl flex-wrap gap-3">
+          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {featureItems.map((item, idx) => {
               const Icon = item.icon
               return (
                 <article
                   key={item.title}
-                  className={`min-w-0 flex-1 rounded-3xl px-5 py-6 sm:min-w-[280px] ${
+                  className={`min-w-0 rounded-3xl px-5 py-6 ${
                     idx % 2 === 0 ? "bg-[#ecece6]" : "bg-[#e8e7df]"
                   }`}
                 >
@@ -137,11 +137,11 @@ export default function Home() {
         </section>
 
         <section className="relative bg-[#ecece6] px-4 py-12 sm:px-6 lg:px-8">
-          <div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-3">
+          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 lg:grid-cols-3">
             {useCases.map((useCase) => (
-              <article key={useCase.title}>
-                <h3 className="text-xl font-semibold tracking-tight text-zinc-900">{useCase.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-zinc-600">{useCase.description}</p>
+              <article key={useCase.title} className="min-w-0 rounded-2xl bg-white/70 p-5 sm:p-6">
+                <h3 className="text-lg font-semibold tracking-tight text-zinc-900 sm:text-xl">{useCase.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-zinc-600 break-words">{useCase.description}</p>
               </article>
             ))}
           </div>
@@ -149,18 +149,18 @@ export default function Home() {
 
         <section id="testimonials" className="relative bg-[#ecece6] px-4 pb-14 pt-6 sm:px-6 sm:pb-16 lg:px-8">
           <div className="mx-auto max-w-6xl">
-            <div className="mb-5 flex items-end justify-between">
+            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">Testimonials</p>
                 <h2 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-900 sm:text-3xl">Loved by builders</h2>
               </div>
               <p className="hidden text-sm text-zinc-500 sm:block">Scroll to read more stories</p>
             </div>
-            <div className="flex gap-4 overflow-x-auto pb-2 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300">
+            <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300">
               {testimonials.map((testimonial, idx) => (
                 <blockquote
                   key={`${testimonial.name}-${idx}`}
-                  className="w-[300px] shrink-0 rounded-2xl border border-zinc-200 bg-white/75 p-5 backdrop-blur-[1px] sm:w-[340px]"
+                  className="w-[88vw] max-w-[340px] shrink-0 snap-start rounded-2xl border border-zinc-200 bg-white/75 p-5 backdrop-blur-[1px]"
                 >
                   <p className="text-sm leading-relaxed text-zinc-700">"{testimonial.text}"</p>
                   <footer className="mt-4">
@@ -178,4 +178,3 @@ export default function Home() {
     </LenisProvider>
   )
 }
-

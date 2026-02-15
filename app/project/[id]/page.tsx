@@ -2159,17 +2159,85 @@ function ProjectContent() {
             </div>
 
             <div className="h-[32vh] min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:h-[38vh] sm:px-5 sm:py-5 lg:h-auto">
-              <div className="max-w-[90%] rounded-2xl bg-zinc-100 px-4 py-3 text-sm leading-relaxed text-zinc-800">
-                {project.prompt}
+              <div className="group mr-auto max-w-[90%]">
+                {editingTarget?.kind === "prompt" ? (
+                  <div className="rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-zinc-900">
+                    <textarea
+                      value={editingDraft}
+                      onChange={(e) => setEditingDraft(e.target.value)}
+                      className="w-full resize-none bg-transparent text-sm text-zinc-900 outline-none"
+                      rows={3}
+                      autoFocus
+                    />
+                    <div className="mt-2 flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                        onClick={handleCancelEdit}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8 bg-zinc-900 text-white hover:bg-black"
+                        onClick={() => handleEditSubmit(editingDraft)}
+                        disabled={!editingDraft.trim()}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative rounded-2xl bg-zinc-100 px-4 py-3 text-sm leading-relaxed text-zinc-800">
+                      {project.prompt}
+                      {canEdit && (
+                        <div className="absolute right-2 top-2 flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(project.prompt || "")
+                                toast({ title: "Copied", description: "Prompt copied to clipboard." })
+                              } catch {
+                                toast({ title: "Copy failed", description: "Could not copy prompt.", variant: "destructive" })
+                              }
+                            }}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 bg-white/90 text-zinc-600 transition-colors hover:bg-white hover:text-zinc-900"
+                            aria-label="Copy prompt"
+                            title="Copy"
+                          >
+                            <Copy className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTarget({ kind: "prompt" })
+                              setEditingDraft(project.prompt || "")
+                            }}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 bg-white/90 text-zinc-600 transition-colors hover:bg-white hover:text-zinc-900"
+                            aria-label="Edit prompt"
+                            title="Edit"
+                          >
+                            <Edit2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
               {project.messages?.map((msg, i) => (
                 <div key={i} className={cn("group", msg.role === "user" ? "ml-auto max-w-[90%]" : "mr-auto max-w-[90%]")}>
                   {msg.role === "user" && editingTarget?.kind === "message" && editingTarget.index === i ? (
-                    <div className="rounded-2xl bg-[#1f1f1f] px-3 py-3 text-white">
+                    <div className="rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-zinc-900">
                       <textarea
                         value={editingDraft}
                         onChange={(e) => setEditingDraft(e.target.value)}
-                        className="w-full resize-none bg-transparent text-sm text-white outline-none"
+                        className="w-full resize-none bg-transparent text-sm text-zinc-900 outline-none"
                         rows={3}
                         autoFocus
                       />
@@ -2178,7 +2246,7 @@ function ProjectContent() {
                           type="button"
                           size="sm"
                           variant="outline"
-                          className="h-8 border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+                          className="h-8 border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
                           onClick={handleCancelEdit}
                         >
                           Cancel
@@ -2186,7 +2254,7 @@ function ProjectContent() {
                         <Button
                           type="button"
                           size="sm"
-                          className="h-8 bg-white text-zinc-900 hover:bg-zinc-200"
+                          className="h-8 bg-zinc-900 text-white hover:bg-black"
                           onClick={() => handleEditSubmit(editingDraft)}
                           disabled={!editingDraft.trim()}
                         >
@@ -2197,29 +2265,45 @@ function ProjectContent() {
                   ) : (
                     <div
                       className={cn(
-                        "rounded-2xl px-4 py-3 text-sm leading-relaxed transition-colors",
+                        "relative rounded-2xl px-4 py-3 text-sm leading-relaxed transition-colors",
                         msg.role === "user"
                           ? "bg-[#1f1f1f] text-white"
                           : "bg-zinc-100 text-zinc-800"
                       )}
                     >
                       {msg.content}
-                    </div>
-                  )}
-
-                  {msg.role === "user" && !(editingTarget?.kind === "message" && editingTarget.index === i) && canEdit && (
-                    <div className="mt-1 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingTarget({ kind: "message", index: i })
-                          setEditingDraft(msg.content)
-                        }}
-                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 text-xs text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-100 group-hover:opacity-100"
-                      >
-                        <Edit2 className="h-3 w-3" />
-                        Edit
-                      </button>
+                      {msg.role === "user" && canEdit && (
+                        <div className="absolute right-2 top-2 flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(msg.content || "")
+                                toast({ title: "Copied", description: "Message copied to clipboard." })
+                              } catch {
+                                toast({ title: "Copy failed", description: "Could not copy message.", variant: "destructive" })
+                              }
+                            }}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+                            aria-label="Copy message"
+                            title="Copy"
+                          >
+                            <Copy className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTarget({ kind: "message", index: i })
+                              setEditingDraft(msg.content)
+                            }}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+                            aria-label="Edit message"
+                            title="Edit"
+                          >
+                            <Edit2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2239,13 +2323,25 @@ function ProjectContent() {
 
             {canEdit ? (
               <div className="border-t border-zinc-100 p-2.5 sm:p-3">
+                {remainingTokens <= 0 && (
+                  <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                    <p className="text-sm font-medium text-amber-900">You’ve used all credits for this cycle.</p>
+                    <p className="mt-0.5 text-xs text-amber-800">
+                      Upgrade your plan to continue generating website updates.
+                      {" "}
+                      <Link href="/pricing" className="font-semibold underline underline-offset-2">
+                        View plans
+                      </Link>
+                    </p>
+                  </div>
+                )}
                 <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {contextualChips.map((chip) => (
                     <button
                       key={chip}
                       type="button"
                       onClick={() => handleSendMessage(chip)}
-                      disabled={!canEdit || isGenerating}
+                      disabled={!canEdit || isGenerating || remainingTokens <= 0}
                       className="whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {chip}
@@ -2258,6 +2354,7 @@ function ProjectContent() {
                   isLoading={isGenerating}
                   placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
                   onSubmit={(value, model) => handleSendMessage(value, model)}
+                  disabled={remainingTokens <= 0}
                   visualEditToggle={{
                     active: visualEditActive,
                     onToggle: () => setVisualEditActive((v) => !v),
@@ -2352,6 +2449,27 @@ function ProjectContent() {
           </section>
         </div>
       </div>
+
+      <Dialog open={tokenLimitModalOpen} onOpenChange={setTokenLimitModalOpen}>
+        <DialogContent className="max-w-md border-zinc-200 bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-zinc-900">You’re out of credits</DialogTitle>
+            <DialogDescription className="text-zinc-600">
+              This workspace has no credits left in the current cycle. Upgrade to continue generating website updates.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" className="border-zinc-300 text-zinc-700" onClick={() => setTokenLimitModalOpen(false)}>
+              Close
+            </Button>
+            <Link href="/pricing">
+              <Button type="button" className="bg-[#1f1f1f] text-white hover:bg-black" onClick={() => setTokenLimitModalOpen(false)}>
+                Upgrade Plan
+              </Button>
+            </Link>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deployOpen} onOpenChange={setDeployOpen}>
         <DialogContent className="max-w-md border-zinc-200 bg-white">

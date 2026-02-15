@@ -19,21 +19,25 @@ function getPeriodEndDate(raw: unknown): Date | null {
 }
 
 export async function POST(req: Request) {
-  const { prompt, model = "gpt-4o", idToken, existingFiles } = await req.json() as {
+  const body = await req.json() as {
     prompt: string
     model?: string
-    idToken: string
+    idToken?: string
     existingFiles?: { path: string; content: string }[]
   }
+  const { prompt, model = "gpt-4o", idToken, existingFiles } = body
 
-  // authenticate user via Firebase ID token
-  if (!idToken) {
+  // authenticate user via Firebase ID token (body) or Authorization Bearer token (header)
+  const authHeader = req.headers.get("authorization") || req.headers.get("Authorization")
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null
+  const authToken = (idToken && idToken.trim()) || bearerToken
+  if (!authToken) {
     return new Response(JSON.stringify({ error: 'Missing idToken' }), { status: 401 })
   }
 
   let uid: string
   try {
-    const decoded = await adminAuth.verifyIdToken(idToken)
+    const decoded = await adminAuth.verifyIdToken(authToken)
     uid = decoded.uid
   } catch (err) {
     return new Response(JSON.stringify({ error: 'Invalid idToken' }), { status: 401 })
@@ -289,21 +293,16 @@ Do NOT output this for purely static sites, landing pages, or UI-only apps with 
                 
                 console.log('Transaction - User Plan:', planId, 'Plan Tokens:', planTokensPerMonth, 'Charging tokens:', tokensToCharge, 'Remaining before:', remaining)
                 
-                // If generation exceeds plan limit, warn and do not charge (stream already delivered)
+                // Always deduct available credits for a completed generation.
+                // If actual usage is higher than remaining, consume remaining and clamp to 0.
                 if (tokensToCharge > planTokensPerMonth) {
-                  console.warn(`Generation used ${tokensToCharge} tokens but ${planId} plan only allows ${planTokensPerMonth}. Recommend upgrade.`)
-                  controller.enqueue(encoder.encode('\n\n{"type":"warning","message":"This generation exceeded your plan\'s monthly token limit. Please upgrade your plan to continue generating."}'))
-                  return
+                  console.warn(`Generation used ${tokensToCharge} tokens while ${planId} plan monthly allowance is ${planTokensPerMonth}.`)
                 }
-                
                 if (remaining < tokensToCharge) {
-                  console.warn(`User ${uid} on ${planId} plan has ${remaining} tokens but needs ${tokensToCharge}`)
-                  controller.enqueue(encoder.encode('\n\n{"type":"warning","message":"Insufficient tokens for this generation. Please upgrade your plan."}'))
-                  return
+                  console.warn(`User ${uid} has ${remaining} tokens but generation used ${tokensToCharge}; consuming remaining balance.`)
                 }
-                
-                // Cap charge so remaining never goes negative (robust)
                 const actualCharge = Math.min(tokensToCharge, remaining)
+                if (actualCharge <= 0) return
                 const currentUsed = data?.tokenUsage?.used || data?.tokensUsed || 0
                 const newUsed = currentUsed + actualCharge
                 const newRemaining = Math.max(0, remaining - actualCharge)

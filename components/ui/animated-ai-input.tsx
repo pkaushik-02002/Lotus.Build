@@ -69,6 +69,7 @@ interface AnimatedAIInputProps {
   isLoading?: boolean;
   compact?: boolean;
   visualEditToggle?: { active: boolean; onToggle: () => void };
+  disabled?: boolean;
 }
 
 export function AnimatedAIInput({
@@ -78,6 +79,7 @@ export function AnimatedAIInput({
   isLoading = false,
   compact = false,
   visualEditToggle,
+  disabled = false,
 }: AnimatedAIInputProps) {
   const router = useRouter();
   const { user, userData } = useAuth();
@@ -103,7 +105,7 @@ export function AnimatedAIInput({
   }, [isPaidUser]);
 
   const handleSubmit = async () => {
-    if (!value.trim() || isCreating || isLoading) return;
+    if (!value.trim() || isCreating || isLoading || disabled) return;
 
     if (mode === "chat" && onSubmit) {
       const submittedValue = value.trim();
@@ -143,19 +145,24 @@ export function AnimatedAIInput({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isSubmitKey = (e.key === "Enter" && !e.shiftKey) || ((e.ctrlKey || e.metaKey) && e.key === "Enter");
     if (isSubmitKey && value.trim() && !isCreating && !isLoading) {
+      if (disabled) return;
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  const canSubmit = value.trim().length > 0 && !isCreating && !isLoading;
+  const canSubmit = value.trim().length > 0 && !isCreating && !isLoading && !disabled;
 
   return (
     <div className="group w-full max-w-2xl">
       <div
         className={cn(
           "relative rounded-3xl border bg-[#fcfcfa] shadow-sm transition-all duration-200",
-          isFocused ? "border-zinc-400 ring-2 ring-zinc-300/60" : "border-zinc-200 hover:border-zinc-300"
+          disabled
+            ? "border-zinc-200 opacity-70"
+            : isFocused
+              ? "border-zinc-400 ring-2 ring-zinc-300/60"
+              : "border-zinc-200 hover:border-zinc-300"
         )}
       >
         <div className="relative px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5">
@@ -174,6 +181,7 @@ export function AnimatedAIInput({
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
+            disabled={disabled}
             onChange={(e) => {
               setValue(e.target.value);
               adjustHeight();

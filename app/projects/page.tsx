@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { collection, doc, deleteDoc, onSnapshot, orderBy, query } from "firebase/firestore"
+import { doc, deleteDoc } from "firebase/firestore"
 import {
   LayoutGrid,
   Compass,
@@ -20,6 +20,7 @@ import {
   LogOut,
   User,
   CreditCard,
+  Users,
 } from "lucide-react"
 
 import { ProtectedRoute } from "@/components/auth/protected-route"
@@ -40,6 +41,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { PlanCard } from "@/components/ui/plan-card"
 import { cn } from "@/lib/utils"
 import { db } from "@/lib/firebase"
+import { planIdForDisplay } from "@/lib/plans"
+import { useProjectList } from "@/hooks/use-project-list"
 
 type ProjectStatus = "pending" | "generating" | "complete" | "error"
 
@@ -49,14 +52,18 @@ type ProjectSummary = {
   model?: string
   status: ProjectStatus
   createdAt?: any
+  updatedAt?: any
   sandboxUrl?: string
+  workspaceId?: string
+  workspaceName?: string
 }
 
 function toDate(value: any): Date | null {
   if (!value) return null
   if (value instanceof Date) return value
   if (typeof value?.toDate === "function") return value.toDate()
-  return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
 function sectionLabel(d: Date | null): "Today" | "Yesterday" | "Previous" {
@@ -118,8 +125,9 @@ export default function ProjectsPage() {
       ? Math.min(100, Math.round((userData.tokenUsage.used / tokensLimit) * 100))
       : 0
   const isFreePlan = !userData?.planId || userData.planId === "free"
+  const isTeamsPlan = !!userData?.planId && planIdForDisplay(userData.planId) === "team"
 
-  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [scope, setScope] = useState<"user" | "team">("user")
   const [search, setSearch] = useState("")
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
@@ -129,26 +137,22 @@ export default function ProjectsPage() {
     if (isLg) setIsSidebarOpen(true)
   }, [])
 
-  // Subscribe to projects
   useEffect(() => {
-    const q = query(collection(db, "projects"), orderBy("createdAt", "desc"))
-    const unsub = onSnapshot(q, (snap) => {
-      const next: ProjectSummary[] = []
-      snap.forEach((docSnap) => {
-        const data = docSnap.data() as any
-        next.push({
-          id: docSnap.id,
-          prompt: data.prompt || "",
-          model: data.model,
-          status: (data.status as ProjectStatus) || "pending",
-          createdAt: data.createdAt,
-          sandboxUrl: data.sandboxUrl,
-        })
-      })
-      setProjects(next)
-    })
-    return () => unsub()
-  }, [])
+    if (!isTeamsPlan && scope === "team") setScope("user")
+  }, [isTeamsPlan, scope])
+
+  const getAuthHeader = useCallback(async (): Promise<Record<string, string>> => {
+    if (!user) return {}
+    const token = await user.getIdToken()
+    return { Authorization: `Bearer ${token}` }
+  }, [user])
+
+  const { projects, loading: projectsLoading, error: projectsError } = useProjectList({
+    scope,
+    uid: user?.uid ?? null,
+    workspaceId: scope === "team" ? userData?.currentWorkspaceId || null : null,
+    getAuthHeader,
+  })
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -183,10 +187,10 @@ export default function ProjectsPage() {
 
   return (
     <ProtectedRoute>
-      <div className="relative flex min-h-screen w-full flex-col overflow-hidden bg-[#f5f5f2] text-zinc-900 lg:flex-row">
+      <div className="relative flex min-h-screen w-full flex-col overflow-hidden bg-[linear-gradient(180deg,#f7f7f3_0%,#f1f1eb_100%)] text-zinc-900 lg:flex-row">
 
         {/* Left icon rail (desktop) */}
-        <aside className="relative z-20 hidden h-screen w-16 shrink-0 flex-col items-center gap-4 border-r border-zinc-200 bg-[#f5f5f2] px-3 py-5 lg:flex">
+        <aside className="relative z-20 hidden h-screen w-16 shrink-0 flex-col items-center gap-4 border-r border-zinc-200/80 bg-white/70 px-3 py-5 backdrop-blur-sm lg:flex">
           <Link
             href="/"
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
@@ -196,7 +200,7 @@ export default function ProjectsPage() {
 
           <div className="flex flex-col gap-1.5">
             <span
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-300 bg-zinc-100 text-zinc-900"
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-300 bg-zinc-900 text-white"
               title="Projects"
             >
               <LayoutGrid className="h-4 w-4" />
@@ -318,7 +322,7 @@ export default function ProjectsPage() {
         {/* Projects sidebar (mobile overlay, desktop inline) */}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-40 flex h-full min-h-0 flex-col border-r border-zinc-200 bg-[#f5f5f2] transition-transform duration-300 ease-out lg:relative lg:z-10 lg:w-80 lg:bg-[#f5f5f2]",
+            "fixed inset-y-0 left-0 z-40 flex h-full min-h-0 flex-col border-r border-zinc-200 bg-[#f5f5f2]/95 backdrop-blur-sm transition-transform duration-300 ease-out lg:relative lg:z-10 lg:w-80 lg:bg-white/60",
             isSidebarOpen
               ? "w-full max-w-[330px] translate-x-0 lg:max-w-none"
               : "-translate-x-full lg:translate-x-0 lg:w-80"
@@ -326,7 +330,7 @@ export default function ProjectsPage() {
         >
           <div className="flex h-full min-h-0 flex-col">
             {/* Sidebar header */}
-            <div className="shrink-0 border-b border-zinc-200 bg-[#f5f5f2]/70 px-4 py-3 lg:px-5">
+            <div className="shrink-0 border-b border-zinc-200 bg-white/70 px-4 py-3 lg:px-5">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold text-zinc-900">
                   Your Projects
@@ -343,7 +347,7 @@ export default function ProjectsPage() {
             </div>
 
             {/* Sidebar search */}
-            <div className="shrink-0 bg-[#f5f5f2]/30 px-4 py-3">
+            <div className="shrink-0 bg-white/40 px-4 py-3">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
                 <Input
@@ -410,8 +414,8 @@ export default function ProjectsPage() {
             </div>
 
             {/* Pro Access bottom card */}
-            <div className="shrink-0 border-t border-zinc-200 bg-[#f5f5f2]/40 px-4 pb-4 pt-3">
-              <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+            <div className="shrink-0 border-t border-zinc-200 bg-white/50 px-4 pb-4 pt-3">
+              <div className="rounded-2xl border border-zinc-200 bg-gradient-to-b from-white to-[#f8f8f4] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-medium text-zinc-900">
@@ -437,7 +441,7 @@ export default function ProjectsPage() {
         {/* Main content area */}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
           {/* Top bar */}
-          <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 bg-[#f5f5f2] px-4 sm:px-6">
+          <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white/70 px-4 backdrop-blur-sm sm:px-6">
             {/* Desktop sidebar toggle */}
             <Button
               type="button"
@@ -480,7 +484,7 @@ export default function ProjectsPage() {
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12 lg:py-16">
               {/* Hero */}
-              <section className="rounded-3xl border border-zinc-200 bg-white px-4 py-8 text-center shadow-sm sm:px-8 sm:py-12">
+              <section className="rounded-[2rem] border border-zinc-200 bg-gradient-to-b from-white to-[#f8f8f4] px-4 py-8 text-center shadow-[0_25px_80px_-60px_rgba(0,0,0,0.8)] sm:px-8 sm:py-12">
                 <h1 className="text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl lg:text-5xl">
                   What do you want to create?
                 </h1>
@@ -497,15 +501,53 @@ export default function ProjectsPage() {
                 <AnimatedAIInput />
               </div>
 
+              {isTeamsPlan && (
+                <div className="mt-8 flex justify-center sm:mt-10">
+                  <div className="inline-flex rounded-xl border border-zinc-200 bg-white p-1">
+                    <button
+                      type="button"
+                      onClick={() => setScope("user")}
+                      className={cn(
+                        "rounded-lg px-4 py-2 text-sm transition-colors",
+                        scope === "user"
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                      )}
+                    >
+                      My Projects
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScope("team")}
+                      className={cn(
+                        "rounded-lg px-4 py-2 text-sm transition-colors",
+                        scope === "team"
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                      )}
+                    >
+                      Team Projects
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Workspace section */}
-              <section className="mt-10 rounded-3xl border border-zinc-200 bg-white p-4 sm:mt-14 sm:p-6 lg:p-8">
+              <section className="mt-10 rounded-[2rem] border border-zinc-200 bg-white p-4 shadow-[0_24px_80px_-60px_rgba(0,0,0,0.9)] sm:mt-14 sm:p-6 lg:p-8">
+                {projectsError && (
+                  <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    Failed to load some projects. {projectsError}
+                  </div>
+                )}
                 <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-base font-semibold text-zinc-900 sm:text-lg">
-                      Your Workspace
+                      {scope === "team" ? "Team Projects" : "Your Workspace"}
                     </h2>
                     <p className="mt-0.5 text-xs text-zinc-500 sm:text-sm">
-                      Continue from where you left off.
+                      {scope === "team"
+                        ? "Projects shared with your team."
+                        : "Continue from where you left off."}
                     </p>
                   </div>
                   {filtered.length > 6 && (
@@ -522,6 +564,11 @@ export default function ProjectsPage() {
 
                 {/* Workspace cards */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
+                  {projectsLoading && (
+                    <div className="col-span-full rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-500">
+                      Loading projects...
+                    </div>
+                  )}
                   {workspaceCards.map((p) => (
                     <button
                       key={p.id}
@@ -537,8 +584,14 @@ export default function ProjectsPage() {
                               <div className="truncate text-sm font-medium text-zinc-900">
                                 {projectTitle(p.prompt)}
                               </div>
-                              <div className="mt-0.5 truncate text-xs text-zinc-500">
-                                {p.model || "AI"}
+                              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                                <span className="truncate">{p.model || "AI"}</span>
+                                {scope === "team" && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-600">
+                                    <Users className="h-3 w-3" />
+                                    Team Project
+                                  </span>
+                                )}
                               </div>
                             </div>
                             {statusPill(p.status)}
@@ -555,6 +608,11 @@ export default function ProjectsPage() {
                                   : undefined,
                             }) || "—"}
                           </div>
+                          {scope === "team" && (
+                            <div className="mt-1 text-[11px] text-zinc-500">
+                              Workspace: {p.workspaceName || "Team Workspace"}
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     </button>
@@ -562,16 +620,18 @@ export default function ProjectsPage() {
                 </div>
 
                 {/* Empty state */}
-                {workspaceCards.length === 0 && (
+                {!projectsLoading && workspaceCards.length === 0 && (
                   <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-8 text-center sm:mt-6 sm:p-10">
                     <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100">
                       <LayoutGrid className="h-6 w-6 text-zinc-500" />
                     </div>
                     <p className="mt-4 text-sm font-medium text-zinc-800">
-                      No projects yet
+                      {scope === "team" ? "No team projects yet" : "No projects yet"}
                     </p>
                     <p className="mt-1 mx-auto max-w-sm text-xs text-zinc-500">
-                      Use the prompt above to create your first project.
+                      {scope === "team"
+                        ? "No team projects yet — create one or ask your teammates to share."
+                        : "Use the prompt above to create your first project."}
                     </p>
                   </div>
                 )}

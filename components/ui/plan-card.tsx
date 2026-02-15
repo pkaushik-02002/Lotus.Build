@@ -2,8 +2,6 @@
 
 import Link from "next/link"
 import { motion } from "framer-motion"
-
-import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
 import { cn } from "@/lib/utils"
 
@@ -19,19 +17,10 @@ export function PlanCard({ className }: { className?: string }) {
   return (
     <div 
       className={cn(
-        "relative bg-zinc-950 border border-zinc-800/50 rounded-2xl overflow-hidden",
+        "relative overflow-hidden rounded-2xl border border-zinc-200 bg-[#f8f8f5]",
         className
       )}
     >
-      {/* Top edge highlight */}
-      <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-zinc-700/50 to-transparent" />
-      
-      {/* Corner accents */}
-      <div className="absolute top-0 left-0 w-8 h-px bg-gradient-to-r from-zinc-600/50 to-transparent" />
-      <div className="absolute top-0 left-0 w-px h-8 bg-gradient-to-b from-zinc-600/50 to-transparent" />
-      <div className="absolute top-0 right-0 w-8 h-px bg-gradient-to-l from-zinc-600/50 to-transparent" />
-      <div className="absolute top-0 right-0 w-px h-8 bg-gradient-to-b from-zinc-600/50 to-transparent" />
-
       <div className="p-5 space-y-5">
         {/* Header - Plan Badge + Remaining */}
         <div className="flex items-start justify-between">
@@ -39,10 +28,10 @@ export function PlanCard({ className }: { className?: string }) {
             <div className={cn(
               "relative flex items-center justify-center w-8 h-8 rounded-lg border",
               isCritical 
-                ? "bg-red-950/30 border-red-900/50 text-red-400"
+                ? "bg-red-50 border-red-200 text-red-500"
                 : isLow
-                  ? "bg-orange-950/30 border-orange-900/50 text-orange-400"
-                  : "bg-amber-950/30 border-amber-900/50 text-amber-400"
+                  ? "bg-amber-50 border-amber-200 text-amber-600"
+                  : "bg-zinc-100 border-zinc-200 text-zinc-700"
             )}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -58,7 +47,7 @@ export function PlanCard({ className }: { className?: string }) {
               <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
                 Current Plan
               </div>
-              <div className="text-sm font-semibold text-zinc-200">
+              <div className="text-sm font-semibold text-zinc-900">
                 {userData?.planName ?? "Free"}
               </div>
             </div>
@@ -70,7 +59,7 @@ export function PlanCard({ className }: { className?: string }) {
             </div>
             <div className={cn(
               "text-lg font-bold tabular-nums leading-none mt-0.5",
-              isCritical ? "text-red-400" : isLow ? "text-orange-400" : "text-zinc-200"
+              isCritical ? "text-red-500" : isLow ? "text-amber-600" : "text-zinc-900"
             )}>
               {Math.max(0, remainingTokens).toLocaleString()}
             </div>
@@ -92,15 +81,12 @@ export function PlanCard({ className }: { className?: string }) {
                   initial={false}
                   animate={{
                     backgroundColor: isActive 
-                      ? isCritical ? "#f87171" : isLow ? "#fb923c" : "#f59e0b"
-                      : "#27272a",
+                      ? isCritical ? "#ef4444" : isLow ? "#f59e0b" : "#27272a"
+                      : "#e4e4e7",
                     scaleY: isCurrent ? 1.2 : 1,
                   }}
                   transition={{ duration: 0.3, delay: i * 0.02 }}
-                  className={cn(
-                    "flex-1 rounded-sm origin-center",
-                    isActive && !isCritical && !isLow && "shadow-[0_0_8px_rgba(245,158,11,0.4)]"
-                  )}
+                  className="flex-1 rounded-sm origin-center"
                 />
               )
             })}
@@ -110,35 +96,25 @@ export function PlanCard({ className }: { className?: string }) {
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2 text-zinc-500">
               <span className="tabular-nums">{used.toLocaleString()}</span>
-              <span className="text-zinc-700">/</span>
+              <span className="text-zinc-400">/</span>
               <span className="tabular-nums">{limit.toLocaleString()}</span>
-              <span className="text-zinc-600">tokens</span>
+              <span className="text-zinc-500">tokens</span>
             </div>
             <div className={cn(
               "font-semibold tabular-nums",
-              isCritical ? "text-red-400" : isLow ? "text-orange-400" : "text-amber-500"
+              isCritical ? "text-red-500" : isLow ? "text-amber-600" : "text-zinc-700"
             )}>
               {percent}% used
             </div>
           </div>
         </div>
 
-        {/* Modern Upgrade Button */}
+        {/* Upgrade Button */}
         <Link 
           href="/pricing"
-          className="group relative flex items-center justify-center w-full h-11 overflow-hidden rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors duration-300"
+          className="group inline-flex h-11 w-full items-center justify-center rounded-xl border border-zinc-300 bg-white text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
         >
-          {/* Animated background gradient */}
-          <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/10 to-orange-500/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
-          
-          {/* Border glow on hover */}
-          <div className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 blur-sm" />
-            <div className="absolute inset-[1px] rounded-xl bg-zinc-900" />
-          </div>
-
-          {/* Content */}
-          <span className="relative flex items-center gap-2 text-sm font-medium text-zinc-300 group-hover:text-zinc-100 transition-colors">
+          <span className="flex items-center gap-2">
             Upgrade Plan
             <svg 
               className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" 
@@ -149,16 +125,8 @@ export function PlanCard({ className }: { className?: string }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 8l4 4m0 0l-4 4m4-4H3" />
             </svg>
           </span>
-
-          {/* Shine effect */}
-          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none">
-            <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent" />
-          </div>
         </Link>
       </div>
-
-      {/* Bottom edge */}
-      <div className="absolute bottom-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-zinc-800/50 to-transparent" />
     </div>
   )
 }
