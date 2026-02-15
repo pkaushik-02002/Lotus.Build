@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Navbar } from "@/components/ui/navbar"
 import { FooterSection } from "@/components/sections/footer-section"
-import { Check, ArrowLeft, Loader2, X } from "lucide-react"
+import { Check, ArrowLeft, Loader2, Sparkles, ShieldCheck, Rocket } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/contexts/auth-context"
 import {
@@ -111,6 +111,14 @@ export default function PricingPage() {
       )
     : 0
   const remaining = userData ? Math.max(0, userData.tokenUsage?.remaining ?? tokensLimit - tokensUsed) : 0
+  const normalizeFeatureCopy = (feature: string) => {
+    const f = feature.toLowerCase()
+    if (f.includes("api")) return "Website publishing and growth-ready workflows"
+    if (f.includes("webhook")) return "Smart automation triggers for your website updates"
+    if (f.includes("sdk")) return "Built-in visual tools and guided editing controls"
+    if (f.includes("rate limit")) return "Higher generation capacity for growing teams"
+    return feature
+  }
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f5f5f2]">
@@ -128,26 +136,41 @@ export default function PricingPage() {
           </Link>
 
           {/* Header */}
-          <div className="mb-10 sm:mb-14 rounded-3xl border border-zinc-200 bg-white p-6 sm:p-8 shadow-[0_30px_80px_-50px_rgba(0,0,0,0.95)]">
-            <p className="mb-2 text-xs font-medium uppercase tracking-widest text-amber-400/90">
+          <div className="mb-10 sm:mb-14 rounded-[2rem] border border-zinc-200 bg-gradient-to-b from-white to-[#f8f8f4] p-6 sm:p-8 md:p-10">
+            <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-600">
+              <Sparkles className="h-3.5 w-3.5" />
               Pricing
             </p>
             <h1 className="font-display text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl md:text-5xl mb-3">
-              Plans & credits
+              Choose a plan for your next website
             </h1>
-            <p className="max-w-xl text-base text-zinc-500 sm:text-lg">
-              Manage your subscription and credit balance. Choose the tier that fits your workflow.
+            <p className="max-w-2xl text-base text-zinc-500 sm:text-lg">
+              Build, refine, and launch professional websites with AI. Start free, then scale as your company grows.
             </p>
+            <div className="mt-7 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-wider text-zinc-500">Built for founders</p>
+                <p className="mt-1 text-sm text-zinc-700">No technical setup required</p>
+              </div>
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-wider text-zinc-500">Launch faster</p>
+                <p className="mt-1 text-sm text-zinc-700">From idea to live website in minutes</p>
+              </div>
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-wider text-zinc-500">Team ready</p>
+                <p className="mt-1 text-sm text-zinc-700">Shared workflows for serious companies</p>
+              </div>
+            </div>
           </div>
 
           {/* Plan summary + credits (when logged in) */}
           {user && userData && (
             <div className="mb-10 sm:mb-12">
-              <div className="flex flex-col gap-5 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 shadow-sm">
+              <div className="flex flex-col gap-5 rounded-3xl border border-zinc-200 bg-white p-5 sm:p-6 shadow-sm">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-4">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-zinc-100 ring-1 ring-zinc-200">
-                      <span className="font-display text-lg font-semibold text-amber-400">
+                      <span className="font-display text-lg font-semibold text-zinc-700">
                         {(planName || "Free").charAt(0)}
                       </span>
                     </div>
@@ -164,7 +187,7 @@ export default function PricingPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="rounded-lg border-zinc-600/80 bg-zinc-100 text-zinc-800 shadow-sm transition-all hover:border-zinc-500 hover:bg-zinc-700/50 hover:text-zinc-900"
+                      className="rounded-lg border-zinc-300 bg-white text-zinc-700 shadow-sm transition-all hover:border-zinc-400 hover:bg-zinc-100"
                     >
                       Manage
                     </Button>
@@ -185,17 +208,17 @@ export default function PricingPage() {
                     <div className="h-full rounded-full bg-zinc-800 transition-all duration-500 ease-out" style={{ width: `${tokensLimit ? Math.min(100, (remaining / tokensLimit) * 100) : 0}%` }} />
                   </div>
                   <p className="mb-3 flex items-center gap-2 text-sm text-zinc-500">
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
-                    Credits used first
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-zinc-500" />
+                    Usage refreshes each billing period
                   </p>
                   <div className="flex flex-col gap-1.5 text-sm text-zinc-500">
                     <p className="flex items-center gap-2">
-                      <X className="h-4 w-4 shrink-0 text-red-400/80" />
-                      No credits will rollover
+                      <Rocket className="h-4 w-4 shrink-0 text-zinc-500" />
+                      Optimize for steady website iteration
                     </p>
                     <p className="flex items-center gap-2">
-                      <Check className="h-4 w-4 shrink-0 text-amber-400" />
-                      Credits reset at period end
+                      <Check className="h-4 w-4 shrink-0 text-zinc-700" />
+                      Predictable monthly usage cycle
                     </p>
                   </div>
                 </div>
@@ -233,11 +256,11 @@ export default function PricingPage() {
                   <div
                     key={plan.id}
                     className={cn(
-                      "flex min-h-0 flex-col rounded-2xl border transition-all duration-300",
+                      "flex min-h-0 flex-col rounded-3xl border transition-all duration-300",
                       "p-6 sm:p-7 lg:p-8",
                       "shadow-sm",
                       recommended
-                        ? "border-amber-500/40 bg-white ring-1 ring-amber-500/20"
+                        ? "border-zinc-900/25 bg-white ring-1 ring-zinc-900/15"
                         : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
                     )}
                   >
@@ -246,7 +269,7 @@ export default function PricingPage() {
                         {plan.name}
                       </h2>
                       {recommended && (
-                        <span className="shrink-0 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold tracking-wide text-amber-400 ring-1 ring-amber-500/30">
+                        <span className="shrink-0 rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold tracking-wide text-white">
                           Recommended
                         </span>
                       )}
@@ -281,7 +304,7 @@ export default function PricingPage() {
                             className={cn(
                               "h-12 w-full rounded-xl border border-zinc-300 bg-zinc-100 py-3 px-4 text-zinc-800 transition-all",
                               "hover:border-zinc-600 hover:bg-zinc-100",
-                              "focus:ring-2 focus:ring-amber-500/30 focus:ring-offset-0 focus:ring-offset-zinc-900"
+                              "focus:ring-2 focus:ring-zinc-400/40 focus:ring-offset-0 focus:ring-offset-zinc-100"
                             )}
                           >
                             <SelectValue>
@@ -334,11 +357,11 @@ export default function PricingPage() {
                     <ul className="mb-8 flex-1 space-y-3 min-h-0">
                       {features.map((feature) => (
                         <li key={feature} className="flex items-start gap-3 min-w-0">
-                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-                            <Check className="h-3 w-3 text-amber-400" strokeWidth={2.5} />
+                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-100">
+                            <Check className="h-3 w-3 text-zinc-700" strokeWidth={2.5} />
                           </span>
                           <span className="text-sm leading-snug text-zinc-600 break-words sm:text-base">
-                            {feature}
+                            {normalizeFeatureCopy(feature)}
                           </span>
                         </li>
                       ))}
@@ -360,8 +383,8 @@ export default function PricingPage() {
                           className={cn(
                             "h-12 w-full rounded-xl font-semibold shadow-lg transition-all hover:shadow-xl active:scale-[0.99] border-0",
                             recommended
-                              ? "bg-amber-500 text-zinc-950 hover:bg-amber-400"
-                              : "bg-zinc-100 text-zinc-900 hover:bg-zinc-700"
+                              ? "bg-zinc-900 text-white hover:bg-black"
+                              : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
                           )}
                           onClick={() => handleSubscribe(effectivePriceId!, effectiveQuantity)}
                         >
@@ -377,7 +400,7 @@ export default function PricingPage() {
                           className={cn(
                             "h-12 w-full rounded-xl font-semibold border-0 opacity-70",
                             recommended
-                              ? "bg-amber-500/80 text-zinc-950"
+                              ? "bg-zinc-900/80 text-white"
                               : "bg-zinc-100 text-zinc-600"
                           )}
                         >
@@ -395,7 +418,7 @@ export default function PricingPage() {
             Questions?{" "}
             <Link
               href="/help"
-              className="font-medium text-amber-400 underline-offset-4 transition-colors hover:text-amber-300"
+              className="font-medium text-zinc-800 underline-offset-4 transition-colors hover:text-zinc-950"
             >
               Visit Help & Support
             </Link>

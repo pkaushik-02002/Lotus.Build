@@ -1,98 +1,49 @@
 import Link from "next/link"
-import { Github, Twitter, Linkedin } from "lucide-react"
-
-const footerLinks = {
-  product: [
-    { label: "Features", href: "/#features" },
-    { label: "Pricing", href: "/pricing" },
-    { label: "Templates", href: "#" },
-    { label: "Documentation", href: "/help" },
-  ],
-  resources: [
-    { label: "Blog", href: "#" },
-    { label: "Tutorials", href: "#" },
-    { label: "Help & Support", href: "/help" },
-    { label: "API Reference", href: "#" },
-  ],
-  legal: [
-    { label: "Privacy", href: "#" },
-    { label: "Terms", href: "#" },
-    { label: "Security", href: "#" },
-  ],
-}
 
 export function FooterSection() {
   return (
-    <footer className="px-6 py-16 border-t border-zinc-900">
-      <div className="max-w-5xl mx-auto">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-          {/* Brand */}
-          <div className="col-span-2 md:col-span-1">
-            <Link href="/" className="font-display text-xl font-semibold text-zinc-900">
-              BuildKit
-            </Link>
-            <p className="mt-4 text-sm text-zinc-500 max-w-xs">
-              Turn your ideas into full-stack apps with AI. No coding required.
+    <footer className="border-t border-zinc-200 bg-[#f5f5f2] px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl">
+        <div className="grid gap-10 md:grid-cols-12">
+          <div className="md:col-span-5">
+            <p className="text-2xl font-semibold tracking-tight text-zinc-900">BuildKit</p>
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-zinc-600">
+              A calm, premium website builder for founders. Turn ideas into polished websites with AI guidance and live editing.
             </p>
+            <p className="mt-4 text-xs uppercase tracking-[0.12em] text-zinc-500">Built for serious teams</p>
           </div>
-
-          {/* Product Links */}
-          <div>
-            <h4 className="font-heading text-sm font-semibold text-zinc-900 mb-4">Product</h4>
-            <ul className="space-y-3">
-              {footerLinks.product.map((link) => (
-                <li key={link.label}>
-                  <Link href={link.href} className="text-sm text-zinc-500 hover:text-zinc-700 transition-colors">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Resources Links */}
-          <div>
-            <h4 className="font-heading text-sm font-semibold text-zinc-900 mb-4">Resources</h4>
-            <ul className="space-y-3">
-              {footerLinks.resources.map((link) => (
-                <li key={link.label}>
-                  <Link href={link.href} className="text-sm text-zinc-500 hover:text-zinc-700 transition-colors">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Legal Links */}
-          <div>
-            <h4 className="font-heading text-sm font-semibold text-zinc-900 mb-4">Legal</h4>
-            <ul className="space-y-3">
-              {footerLinks.legal.map((link) => (
-                <li key={link.label}>
-                  <Link href={link.href} className="text-sm text-zinc-500 hover:text-zinc-700 transition-colors">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+          <div className="grid gap-8 sm:grid-cols-3 md:col-span-7">
+            <div>
+              <p className="text-sm font-medium text-zinc-900">Product</p>
+              <div className="mt-3 space-y-2 text-sm text-zinc-600">
+                <Link href="/" className="block hover:text-zinc-900">Home</Link>
+                <Link href="/pricing" className="block hover:text-zinc-900">Pricing</Link>
+                <Link href="/projects" className="block hover:text-zinc-900">Projects</Link>
+                <Link href="/help" className="block hover:text-zinc-900">Help</Link>
+              </div>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-zinc-900">Company</p>
+              <div className="mt-3 space-y-2 text-sm text-zinc-600">
+                <Link href="/help" className="block hover:text-zinc-900">About</Link>
+                <Link href="/settings" className="block hover:text-zinc-900">Account</Link>
+                <Link href="#" className="block hover:text-zinc-900">Careers</Link>
+                <Link href="#" className="block hover:text-zinc-900">Contact</Link>
+              </div>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-zinc-900">Legal</p>
+              <div className="mt-3 space-y-2 text-sm text-zinc-600">
+                <Link href="#" className="block hover:text-zinc-900">Terms</Link>
+                <Link href="#" className="block hover:text-zinc-900">Privacy</Link>
+                <Link href="#" className="block hover:text-zinc-900">Security</Link>
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* Bottom Bar */}
-        <div className="pt-8 border-t border-zinc-900 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-zinc-600">© {new Date().getFullYear()} BuildKit. All rights reserved.</p>
-          <div className="flex items-center gap-4">
-            <Link href="#" className="text-zinc-500 hover:text-zinc-700 transition-colors" aria-label="GitHub">
-              <Github className="w-5 h-5" />
-            </Link>
-            <Link href="#" className="text-zinc-500 hover:text-zinc-700 transition-colors" aria-label="Twitter">
-              <Twitter className="w-5 h-5" />
-            </Link>
-            <Link href="#" className="text-zinc-500 hover:text-zinc-700 transition-colors" aria-label="LinkedIn">
-              <Linkedin className="w-5 h-5" />
-            </Link>
-          </div>
+        <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-zinc-200 pt-5 text-xs text-zinc-500 sm:flex-row sm:items-center">
+          <p>© {new Date().getFullYear()} BuildKit. All rights reserved.</p>
+          <p>Made for founders building real companies.</p>
         </div>
       </div>
     </footer>
