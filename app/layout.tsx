@@ -10,7 +10,14 @@ const manrope = Manrope({
   variable: "--font-manrope",
 })
 
-const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://buildkit.app"
+function normalizeSiteUrl(raw?: string): string {
+  const value = (raw || "").trim()
+  if (!value) return "https://buildkit.app"
+  if (/^https?:\/\//i.test(value)) return value
+  return `https://${value}`
+}
+
+const siteUrl = normalizeSiteUrl(process.env.NEXT_PUBLIC_APP_URL)
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
