@@ -83,6 +83,9 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null)
   const [githubLoading, setGithubLoading] = useState(false)
   const [githubSyncing, setGithubSyncing] = useState(false)
+  const [githubReposLoading, setGithubReposLoading] = useState(false)
+  const [githubRepos, setGithubRepos] = useState<Array<{ fullName: string; installationId: number }>>([])
+  const [selectedGithubRepo, setSelectedGithubRepo] = useState("")
   const [githubError, setGithubError] = useState("")
   const [githubSuccess, setGithubSuccess] = useState("")
 
@@ -143,12 +146,45 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
       const authHeader = await getAuthHeader()
       const res = await fetch("/api/github/status", { headers: authHeader })
       const json = await res.json().catch(() => ({}))
-      setGithubConnected(!!json?.connected)
+      const connected = !!json?.connected
+      setGithubConnected(connected)
+      if (connected) {
+        await refreshGitHubRepos(authHeader)
+      }
     } catch (e) {
       setGithubConnected(false)
       setGithubError(e instanceof Error ? e.message : "Failed to check GitHub connection.")
     } finally {
       setGithubLoading(false)
+    }
+  }
+
+  const refreshGitHubRepos = async (authHeader?: Record<string, string>) => {
+    try {
+      setGithubReposLoading(true)
+      const headers = authHeader || (await getAuthHeader())
+      const res = await fetch("/api/github/repos", { headers })
+      const json = await res.json().catch(() => ({}))
+      const repos = Array.isArray(json?.repos)
+        ? json.repos
+            .map((r: any) => ({
+              fullName: String(r?.fullName || ""),
+              installationId: Number(r?.installationId || 0),
+            }))
+            .filter((r: { fullName: string; installationId: number }) => !!r.fullName && !!r.installationId)
+        : []
+      setGithubRepos(repos)
+      const linkedRepo = githubIntegration?.repoFullName || ""
+      if (linkedRepo) {
+        setSelectedGithubRepo(linkedRepo)
+      } else if (repos.length > 0 && !selectedGithubRepo) {
+        setSelectedGithubRepo(repos[0].fullName)
+      }
+    } catch (e) {
+      setGithubError(e instanceof Error ? e.message : "Failed to fetch GitHub repositories.")
+      setGithubRepos([])
+    } finally {
+      setGithubReposLoading(false)
     }
   }
 
@@ -176,6 +212,8 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
       const authHeader = await getAuthHeader()
       const res = await fetch("/api/github/disconnect", { method: "POST", headers: authHeader })
       if (!res.ok) throw new Error("Failed to disconnect GitHub.")
+      setSelectedGithubRepo("")
+      setGithubRepos([])
       await refreshGitHubState()
     } catch (e) {
       setGithubError(e instanceof Error ? e.message : "Failed to disconnect GitHub.")
@@ -193,11 +231,15 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
       const res = await fetch("/api/github/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({
+          projectId,
+          repoFullName: githubIntegration?.repoFullName || selectedGithubRepo || undefined,
+        }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.error || "Failed to sync project to GitHub.")
       setGithubSuccess("Project synced to GitHub.")
+      await refreshGitHubRepos(authHeader)
     } catch (e) {
       setGithubError(e instanceof Error ? e.message : "Failed to sync to GitHub.")
     } finally {
@@ -413,7 +455,7 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
           <Button
             type="button"
             onClick={handleConnectAndPublish}
-            disabled={githubLoading || githubSyncing}
+            disabled={githubLoading || githubSyncing || (githubConnected && !githubIntegration?.repoFullName && !selectedGithubRepo)}
             className="bg-zinc-900 text-white hover:bg-black disabled:opacity-60"
           >
             {githubLoading || githubSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -425,6 +467,25 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
             </Button>
           ) : null}
         </div>
+        {githubConnected && !githubIntegration?.repoFullName ? (
+          <div className="mt-3 space-y-1">
+            <Label className="text-zinc-700">Repository</Label>
+            <select
+              value={selectedGithubRepo}
+              onChange={(e) => setSelectedGithubRepo(e.target.value)}
+              disabled={githubReposLoading || githubSyncing}
+              className="mt-1 h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900"
+            >
+              {githubRepos.length === 0 ? <option value="">No repositories available</option> : null}
+              {githubRepos.map((repo) => (
+                <option key={`${repo.installationId}:${repo.fullName}`} value={repo.fullName}>
+                  {repo.fullName}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-zinc-500">Pick a repository installed to your GitHub App, then publish.</p>
+          </div>
+        ) : null}
         {githubError ? <p className="mt-2 text-xs text-red-600">{githubError}</p> : null}
         {githubSuccess ? (
           <p className="mt-2 inline-flex items-center gap-1 text-xs text-emerald-700">

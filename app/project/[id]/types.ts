@@ -35,6 +35,7 @@ export interface Project {
   tokensUsed?: number
   githubRepoUrl?: string
   githubRepoFullName?: string
+  githubInstallationId?: number
   githubSyncedAt?: Date | { toDate: () => Date }
   suggestsBackend?: boolean
   supabaseUrl?: string
