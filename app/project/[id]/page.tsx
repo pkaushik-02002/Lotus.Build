@@ -57,7 +57,8 @@ import {
   Key
 } from "lucide-react"
 import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
-import { ThinkingBar } from "@/components/prompt-kit"
+import { Steps, StepsContent, StepsItem, StepsTrigger } from "@/components/prompt-kit/steps"
+import { Tool } from "@/components/prompt-kit/tool"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
@@ -247,6 +248,23 @@ function ProjectContent() {
         "Applying changes and validating output.",
         "Finalizing and preparing preview.",
       ]
+  const activeToolPart = currentGeneratingFile
+    ? {
+        type: "write_file",
+        state: isGenerating ? "input-available" : "output-available",
+        input: {
+          file: currentGeneratingFile,
+          intent: "Applying content and UI updates",
+        },
+      }
+    : {
+        type: "reasoning",
+        state: isGenerating ? "input-streaming" : "output-available",
+        input: {
+          status: agentStatus || "Making updates",
+        },
+      }
+
 
   const getAuthHeader = useCallback(async () => {
     if (!user) throw new Error("Not authenticated")
@@ -2308,16 +2326,29 @@ function ProjectContent() {
                   )}
                 </div>
               ))}
-              {isGenerating && (
-                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
-                  <ThinkingBar
-                    text={agentStatus || "Making updates"}
-                    steps={runSteps}
-                    isGenerating={isGenerating}
-                    currentFile={currentGeneratingFile}
-                  />
-                </div>
-              )}
+                {isGenerating && (
+                  <div className="space-y-3 rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3 sm:p-4">
+                    <TextShimmer className="text-sm text-zinc-700">{agentStatus || "Deep thinking and generating timeline updates"}</TextShimmer>
+
+                    <Steps defaultOpen>
+                      <StepsTrigger>Agent run: Update website timeline and content</StepsTrigger>
+                      <StepsContent>
+                        <div className="space-y-2">
+                          {runSteps.map((step, idx) => {
+                            const shouldShimmer = isGenerating && (idx === runSteps.length - 1 || /^(creating|updating|editing|writing)\b/i.test(step))
+                            return (
+                              <StepsItem key={`${step}-${idx}`} className={idx === runSteps.length - 1 ? "text-zinc-800" : undefined}>
+                                {shouldShimmer ? <TextShimmer className="text-inherit">{step}</TextShimmer> : step}
+                              </StepsItem>
+                            )
+                          })}
+                        </div>
+                      </StepsContent>
+                    </Steps>
+
+                    <Tool className="w-full" toolPart={activeToolPart} />
+                  </div>
+                )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -2602,4 +2633,10 @@ export default function ProjectPage() {
     </ProjectErrorBoundary>
   )
 }
+
+
+
+
+
+
 

@@ -60,6 +60,47 @@ async function readFileMaybe(sandbox: Sandbox, path: string): Promise<string> {
   }
 }
 
+async function normalizePostcssConfigForPreview(sandbox: Sandbox): Promise<void> {
+  const postcssPath = `${PROJECT_DIR}/postcss.config.js`
+  const packageJsonPath = `${PROJECT_DIR}/package.json`
+
+  const postcssContent = await readFileMaybe(sandbox, postcssPath)
+  if (!postcssContent || !/^\s*export\s+default\b/m.test(postcssContent)) {
+    return
+  }
+
+  let packageType = ""
+  try {
+    const pkg = JSON.parse(await readFileMaybe(sandbox, packageJsonPath))
+    packageType = String(pkg?.type || "")
+  } catch {}
+
+  // Keep ESM config if project is explicitly ESM.
+  if (packageType === "module") {
+    return
+  }
+
+  const normalized = postcssContent.replace(/^\s*export\s+default\b/m, "module.exports =")
+  if (normalized !== postcssContent) {
+    await sandbox.files.write(postcssPath, normalized)
+    console.log("[sandbox] Normalized postcss.config.js to CommonJS for preview runtime")
+  }
+}
+
+function getFatalDevError(devLogs: string): { reason: string; category: "build" | "deps" | "env" } | null {
+  const logs = devLogs || ""
+  if (/Failed to load PostCSS config/i.test(logs) && /Unexpected token 'export'/i.test(logs)) {
+    return { reason: "postcss-config-format", category: "build" }
+  }
+  if (/EADDRINUSE|address already in use/i.test(logs)) {
+    return { reason: "port-in-use", category: "env" }
+  }
+  if (/Cannot find module|ERR_MODULE_NOT_FOUND|Module not found/i.test(logs)) {
+    return { reason: "missing-module", category: "deps" }
+  }
+  return null
+}
+
 async function pidAlive(sandbox: Sandbox, pid: string): Promise<boolean> {
   try {
     const result = await cmd(sandbox, `kill -0 ${pid} 2>/dev/null && echo "ALIVE" || echo "DEAD"`, 5000)
@@ -941,6 +982,7 @@ export async function POST(req: Request) {
         // Configure Vite if needed
         if (framework === "vite") {
           try {
+            await normalizePostcssConfigForPreview(sandbox)
             await ensureViteAllowedHosts(sandbox)
           } catch (e) {
             console.warn("[sandbox] Failed to patch vite config:", e)
@@ -1046,6 +1088,17 @@ export async function POST(req: Request) {
               send({ type: "log", step: "dev", stream: "stdout", data: newLogs })
             }
             lastLogSent = readyCheck.logs
+
+            const fatal = getFatalDevError(readyCheck.logs)
+            if (fatal) {
+              emitTerminalError({
+                error: "Dev server failed to start",
+                logs: { dev: readyCheck.logs },
+                failureCategory: fatal.category,
+                failureReason: fatal.reason,
+              })
+              return
+            }
           }
 
           if (readyCheck.ready) {

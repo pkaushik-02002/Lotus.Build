@@ -1,4 +1,5 @@
 import { adminDb } from "@/lib/firebase-admin"
+import { decryptEnvVars, encryptEnvVars } from "@/lib/encrypt-env"
 
 const SUPABASE_API_BASE = "https://api.supabase.com"
 
@@ -9,6 +10,24 @@ type SupabaseConnection = {
   expiresAt?: string
   createdAt?: Date
   updatedAt?: Date
+}
+
+function encryptToken(token: string | undefined | null): string | null {
+  if (!token) return null
+  try {
+    return encryptEnvVars(token).encrypted
+  } catch {
+    return null
+  }
+}
+
+function decryptToken(encrypted: unknown): string | null {
+  if (typeof encrypted !== "string" || !encrypted.trim()) return null
+  try {
+    return decryptEnvVars(encrypted)
+  } catch {
+    return null
+  }
 }
 
 function getOAuthEnv() {
@@ -92,6 +111,8 @@ export async function refreshSupabaseToken(uid: string, refreshToken: string) {
       userId: uid,
       accessToken: json.access_token,
       refreshToken: nextRefreshToken,
+      accessTokenEncrypted: encryptToken(json.access_token),
+      refreshTokenEncrypted: encryptToken(nextRefreshToken),
       expiresAt,
       updatedAt,
     },
@@ -99,11 +120,9 @@ export async function refreshSupabaseToken(uid: string, refreshToken: string) {
   )
   await adminDb.collection("users").doc(uid).set(
     {
-      supabaseAccessToken: json.access_token,
-      supabaseRefreshToken: nextRefreshToken,
-      supabaseExpiresAt: expiresAt ?? null,
       supabaseConnectedAt: updatedAt,
       supabaseTokenUpdatedAt: updatedAt,
+      supabaseOauthConnected: true,
     },
     { merge: true }
   )
@@ -113,7 +132,22 @@ export async function refreshSupabaseToken(uid: string, refreshToken: string) {
 export async function getSupabaseConnection(uid: string): Promise<SupabaseConnection | null> {
   const snap = await adminDb.collection("supabaseConnections").doc(uid).get()
   if (snap.exists) {
-    return snap.data() as SupabaseConnection
+    const data = snap.data() as Record<string, unknown>
+    const decryptedAccess = decryptToken(data?.accessTokenEncrypted)
+    const decryptedRefresh = decryptToken(data?.refreshTokenEncrypted)
+    const accessToken =
+      decryptedAccess ||
+      (typeof data?.accessToken === "string" ? data.accessToken : "")
+    const refreshToken =
+      decryptedRefresh ||
+      (typeof data?.refreshToken === "string" ? data.refreshToken : undefined)
+    if (!accessToken) return null
+    return {
+      userId: uid,
+      accessToken,
+      refreshToken,
+      expiresAt: typeof data?.expiresAt === "string" ? data.expiresAt : undefined,
+    }
   }
 
   // Backward/alternate storage fallback on users doc.
@@ -142,6 +176,8 @@ export async function saveSupabaseConnection(uid: string, payload: { accessToken
       userId: uid,
       accessToken: payload.accessToken,
       refreshToken: payload.refreshToken ?? null,
+      accessTokenEncrypted: encryptToken(payload.accessToken),
+      refreshTokenEncrypted: encryptToken(payload.refreshToken ?? null),
       expiresAt: expiresAt ?? null,
       createdAt: connectedAt,
       updatedAt: connectedAt,
@@ -150,11 +186,9 @@ export async function saveSupabaseConnection(uid: string, payload: { accessToken
   )
   await adminDb.collection("users").doc(uid).set(
     {
-      supabaseAccessToken: payload.accessToken,
-      supabaseRefreshToken: payload.refreshToken ?? null,
-      supabaseExpiresAt: expiresAt ?? null,
       supabaseConnectedAt: connectedAt,
       supabaseTokenUpdatedAt: connectedAt,
+      supabaseOauthConnected: true,
     },
     { merge: true }
   )

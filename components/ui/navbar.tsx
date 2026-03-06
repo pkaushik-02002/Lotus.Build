@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
@@ -34,6 +34,11 @@ export function Navbar() {
   const router = useRouter()
   const { user, userData, loading, signOut } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleSignOut = async () => {
     try {
@@ -84,7 +89,7 @@ export function Navbar() {
         {/* Right Side */}
         <div className="flex items-center gap-2">
           {/* User/profile + auth (all breakpoints) */}
-          {loading ? (
+          {!mounted || loading ? (
             <div className="w-8 h-8 rounded-full bg-zinc-100 animate-pulse" />
           ) : user && userData ? (
             <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
@@ -212,41 +217,55 @@ export function Navbar() {
 
           {/* Mobile nav sheet – just links */}
           <div className="flex md:hidden">
-            <Sheet>
-              <SheetTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-700"
-                  aria-label="Open navigation"
+            {mounted ? (
+              <Sheet>
+                <SheetTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-700"
+                    aria-label="Open navigation"
+                  >
+                    <span className="relative block h-3.5 w-4.5">
+                      <span className="absolute left-0 top-0 block h-[2px] w-4.5 rounded-full bg-current" />
+                      <span className="absolute bottom-0 left-1 block h-[2px] w-3.5 rounded-full bg-current" />
+                    </span>
+                  </button>
+                </SheetTrigger>
+                <SheetContent
+                  side="top"
+                  className="h-screen bg-[#f5f5f2] px-6 pb-10 pt-16 text-zinc-900"
                 >
-                  <span className="relative block h-3.5 w-4.5">
-                    <span className="absolute left-0 top-0 block h-[2px] w-4.5 rounded-full bg-current" />
-                    <span className="absolute bottom-0 left-1 block h-[2px] w-3.5 rounded-full bg-current" />
-                  </span>
-                </button>
-              </SheetTrigger>
-              <SheetContent
-                side="top"
-                className="h-screen bg-[#f5f5f2] px-6 pb-10 pt-16 text-zinc-900"
+                  <SheetHeader className="p-0 pb-4">
+                    <SheetTitle className="text-sm font-medium uppercase tracking-[0.14em] text-zinc-500">
+                      Navigation
+                    </SheetTitle>
+                  </SheetHeader>
+                  <div className="space-y-3">
+                    {navLinks.map((link) => (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        className="block rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-2xl font-medium leading-tight tracking-wide text-zinc-900 transition-colors hover:bg-zinc-100 sm:text-3xl"
+                      >
+                        {link.label}
+                      </Link>
+                    ))}
+                  </div>
+                </SheetContent>
+              </Sheet>
+            ) : (
+              <button
+                type="button"
+                className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-zinc-700"
+                aria-label="Open navigation"
+                disabled
               >
-                <SheetHeader className="p-0 pb-4">
-                  <SheetTitle className="text-sm font-medium uppercase tracking-[0.14em] text-zinc-500">
-                    Navigation
-                  </SheetTitle>
-                </SheetHeader>
-                <div className="space-y-3">
-                  {navLinks.map((link) => (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      className="block rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-2xl font-medium leading-tight tracking-wide text-zinc-900 transition-colors hover:bg-zinc-100 sm:text-3xl"
-                    >
-                      {link.label}
-                    </Link>
-                  ))}
-                </div>
-              </SheetContent>
-            </Sheet>
+                <span className="relative block h-3.5 w-4.5">
+                  <span className="absolute left-0 top-0 block h-[2px] w-4.5 rounded-full bg-current" />
+                  <span className="absolute bottom-0 left-1 block h-[2px] w-3.5 rounded-full bg-current" />
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </nav>

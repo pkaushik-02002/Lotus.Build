@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { randomState, requireUserUid } from "@/lib/server-auth"
 import { adminDb } from "@/lib/firebase-admin"
-import { getSupabaseAuthorizeUrl } from "@/lib/supabase-management"
+import { getAuthorizeUrl } from "@/lib/integrations/supabase/oauth"
 
 export const runtime = "nodejs"
 
@@ -18,7 +18,7 @@ export async function GET(req: Request) {
       createdAt: new Date(),
     })
 
-    return NextResponse.json({ url: getSupabaseAuthorizeUrl(state) })
+    return NextResponse.json({ url: getAuthorizeUrl(state) })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unauthorized"
     return NextResponse.json({ error: message }, { status: 401 })

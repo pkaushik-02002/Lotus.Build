@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { adminDb } from "@/lib/firebase-admin"
-import { exchangeSupabaseOauthCode, saveSupabaseConnection } from "@/lib/supabase-management"
+import { exchangeCode, storeConnection } from "@/lib/integrations/supabase/oauth"
 
 export const runtime = "nodejs"
 
@@ -43,8 +43,8 @@ export async function GET(req: Request) {
   }
 
   try {
-    const token = await exchangeSupabaseOauthCode(code)
-    await saveSupabaseConnection(uid, {
+    const token = await exchangeCode(code)
+    await storeConnection(uid, {
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       expiresIn: token.expires_in,

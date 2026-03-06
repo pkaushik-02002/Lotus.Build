@@ -62,6 +62,44 @@ async function normalizePostcssConfigForBuild(sandbox: Sandbox) {
   }
 }
 
+async function ensureTsconfigForBuild(sandbox: Sandbox) {
+  const packageJsonPath = "/home/user/project/package.json"
+  const tsconfigPath = "/home/user/project/tsconfig.json"
+
+  let pkg: any = null
+  try {
+    pkg = JSON.parse((await sandbox.files.read(packageJsonPath)).toString())
+  } catch {
+    return
+  }
+
+  const buildScript = typeof pkg?.scripts?.build === "string" ? pkg.scripts.build : ""
+  const usesTsc = /\btsc\b/.test(buildScript)
+  if (!usesTsc) return
+
+  const hasTsconfigCheck = await sandbox.commands.run(
+    "bash -lc \"cd /home/user/project && [ -f tsconfig.json ] && echo yes || echo no\"",
+    { timeoutMs: 10000 }
+  )
+  const hasTsconfig = (hasTsconfigCheck.stdout || "").trim() === "yes"
+  if (hasTsconfig) return
+
+  const minimalTsconfig = {
+    compilerOptions: {
+      target: "ES2020",
+      module: "ESNext",
+      moduleResolution: "Bundler",
+      jsx: "react-jsx",
+      strict: true,
+      noEmit: true,
+      skipLibCheck: true,
+    },
+    include: ["src", "vite-env.d.ts"],
+  }
+
+  await sandbox.files.write(tsconfigPath, JSON.stringify(minimalTsconfig, null, 2))
+}
+
 async function zipDistFromSandbox(sandbox: Sandbox) {
   // List all files under dist
   const list = await sandbox.commands.run(
@@ -180,8 +218,8 @@ export async function POST(req: Request) {
         )
 
         const installCmd = hasLockFile
-          ? "bash -lc \"cd /home/user/project && npm ci\""
-          : "bash -lc \"cd /home/user/project && npm install --no-audit --no-fund\""
+          ? "bash -lc \"cd /home/user/project && npm_config_update_notifier=false npm ci --no-audit --no-fund\""
+          : "bash -lc \"cd /home/user/project && npm_config_update_notifier=false npm install --no-audit --no-fund\""
 
         const install = await sandbox.commands.run(installCmd, {
           timeoutMs: 240000,
@@ -194,7 +232,7 @@ export async function POST(req: Request) {
           if (hasLockFile) {
             send({ type: "log", stream: "stderr", step: "install", message: "npm ci failed, retrying with npm install..." })
             const install2 = await sandbox.commands.run(
-              "bash -lc \"cd /home/user/project && npm install --no-audit --no-fund\"",
+              "bash -lc \"cd /home/user/project && npm_config_update_notifier=false npm install --no-audit --no-fund\"",
               {
                 timeoutMs: 240000,
                 onStdout: (d) =>
@@ -219,6 +257,7 @@ export async function POST(req: Request) {
         }
 
         send({ type: "step", step: "install", status: "success", message: "Dependencies installed" })
+        await ensureTsconfigForBuild(sandbox)
 
         send({ type: "step", step: "build", status: "running", message: "Building project..." })
 
@@ -228,7 +267,7 @@ export async function POST(req: Request) {
         )
         const hasTsconfig = (hasTsconfigCheck.stdout || "").trim() === "yes"
 
-        const build = await sandbox.commands.run("bash -lc \"cd /home/user/project && npm run build\"", {
+        const build = await sandbox.commands.run("bash -lc \"cd /home/user/project && npm_config_update_notifier=false npm run build\"", {
           timeoutMs: 300000,
           onStdout: (d) => send({ type: "log", stream: "stdout", step: "build", message: (d as any)?.line || String(d) }),
           onStderr: (d) => send({ type: "log", stream: "stderr", step: "build", message: (d as any)?.line || String(d) }),

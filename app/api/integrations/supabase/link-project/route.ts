@@ -26,6 +26,7 @@ export async function POST(req: Request) {
 
     const projectUrl = (details?.api_url as string) || (details?.url as string) || ""
     const anonKey = apikeys.find((k) => (k.name || "").toLowerCase().includes("anon"))?.api_key || ""
+    const projectName = (details?.name as string) || supabaseProjectRef
 
     await adminDb.collection("supabaseLinks").doc(builderProjectId).set(
       {
@@ -33,8 +34,10 @@ export async function POST(req: Request) {
         userId: uid,
         builderProjectId,
         supabaseProjectRef,
+        supabaseProjectName: projectName,
         supabaseUrl: projectUrl,
         supabaseAnonKey: anonKey,
+        oauthTokenId: uid,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -44,9 +47,17 @@ export async function POST(req: Request) {
     await adminDb.collection("projects").doc(builderProjectId).set(
       {
         supabaseProjectRef,
+        supabaseProjectName: projectName,
         supabaseUrl: projectUrl,
         supabaseAnonKey: anonKey,
         supabaseConnectedAt: new Date(),
+        integrations: {
+          supabase: {
+            supabaseProjectId: supabaseProjectRef,
+            supabaseProjectName: projectName,
+            oauthTokenId: uid,
+          },
+        },
       },
       { merge: true }
     )
@@ -56,8 +67,10 @@ export async function POST(req: Request) {
       link: {
         builderProjectId,
         supabaseProjectRef,
+        supabaseProjectName: projectName,
         supabaseUrl: projectUrl,
         supabaseAnonKey: anonKey,
+        oauthTokenId: uid,
       },
     })
   } catch (err: unknown) {

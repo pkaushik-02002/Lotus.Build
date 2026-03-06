@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { SupabaseConnectModal } from "@/components/project/SupabaseConnectModal"
+import { SupabaseProjectSelector } from "@/components/project/SupabaseProjectSelector"
+import { SchemaPreviewModal } from "@/components/project/SchemaPreviewModal"
 import type { GeneratedFile, WebsiteSettings } from "@/app/project/[id]/types"
 import { useAuth } from "@/contexts/auth-context"
 
@@ -63,11 +66,18 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [supabaseConnectLoading, setSupabaseConnectLoading] = useState(false)
   const [supabaseChecking, setSupabaseChecking] = useState(false)
-  const [supabaseProjects, setSupabaseProjects] = useState<Array<{ ref: string; name: string }>>([])
+  const [supabaseProjects, setSupabaseProjects] = useState<Array<{ ref: string; name: string; region?: string }>>([])
   const [selectedSupabaseRef, setSelectedSupabaseRef] = useState("")
   const [supabaseLinking, setSupabaseLinking] = useState(false)
   const [supabaseAccountConnected, setSupabaseAccountConnected] = useState(false)
   const [supabaseError, setSupabaseError] = useState("")
+  const [supabaseConnectModalOpen, setSupabaseConnectModalOpen] = useState(false)
+  const [supabaseProjectModalOpen, setSupabaseProjectModalOpen] = useState(false)
+  const [schemaModalOpen, setSchemaModalOpen] = useState(false)
+  const [schemaSql, setSchemaSql] = useState("")
+  const [schemaTables, setSchemaTables] = useState<string[]>([])
+  const [schemaLoading, setSchemaLoading] = useState(false)
+  const [schemaPushLoading, setSchemaPushLoading] = useState(false)
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null)
   const [githubLoading, setGithubLoading] = useState(false)
   const [githubError, setGithubError] = useState("")
@@ -166,7 +176,13 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
       const connected = !!json?.connected
       setSupabaseAccountConnected(connected)
       const projects = Array.isArray(json?.projects)
-        ? json.projects.map((p: any) => ({ ref: (p?.ref || p?.id || "").toString(), name: (p?.name || p?.ref || "").toString() })).filter((p: { ref: string; name: string }) => !!p.ref)
+        ? json.projects
+            .map((p: any) => ({
+              ref: (p?.ref || p?.id || "").toString(),
+              name: (p?.name || p?.ref || "").toString(),
+              region: (p?.region || "").toString(),
+            }))
+            .filter((p: { ref: string; name: string }) => !!p.ref)
         : []
       setSupabaseProjects(projects)
       if (!selectedSupabaseRef && projects[0]?.ref) setSelectedSupabaseRef(projects[0].ref)
@@ -210,10 +226,55 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.error || "Failed to link Supabase project.")
       await refreshSupabaseState()
+      setSupabaseProjectModalOpen(false)
+      await generateSchemaPreview()
     } catch (e) {
       setSupabaseError(e instanceof Error ? e.message : "Failed to link Supabase project.")
     } finally {
       setSupabaseLinking(false)
+    }
+  }
+
+  const generateSchemaPreview = async () => {
+    try {
+      setSchemaLoading(true)
+      setSupabaseError("")
+      const authHeader = await getAuthHeader()
+      const res = await fetch("/api/supabase/generate-schema", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ projectId }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.error || "Failed to generate schema")
+      setSchemaSql((json?.sql || "").toString())
+      setSchemaTables(Array.isArray(json?.tables) ? json.tables.map((t: any) => String(t)) : [])
+      setSchemaModalOpen(true)
+    } catch (e) {
+      setSupabaseError(e instanceof Error ? e.message : "Failed to generate schema.")
+    } finally {
+      setSchemaLoading(false)
+    }
+  }
+
+  const pushSchemaToSupabase = async () => {
+    try {
+      if (!schemaSql.trim()) return
+      setSchemaPushLoading(true)
+      setSupabaseError("")
+      const authHeader = await getAuthHeader()
+      const res = await fetch("/api/supabase/push-schema", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ projectId, sql: schemaSql }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.error || "Failed to push schema")
+      setSchemaModalOpen(false)
+    } catch (e) {
+      setSupabaseError(e instanceof Error ? e.message : "Failed to push schema.")
+    } finally {
+      setSchemaPushLoading(false)
     }
   }
 
@@ -237,7 +298,9 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
         setSupabaseError(data?.message || "Supabase connection failed.")
         return
       }
+      setSupabaseConnectModalOpen(false)
       refreshSupabaseState()
+      setSupabaseProjectModalOpen(true)
     }
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
@@ -332,7 +395,7 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
         {!databaseConnected && (
           <div className="mt-3 space-y-3">
             {!supabaseAccountConnected ? (
-              <Button type="button" variant="outline" onClick={handleConnectSupabase} disabled={supabaseConnectLoading || supabaseChecking} className="border-zinc-300 text-zinc-700">
+              <Button type="button" variant="outline" onClick={() => setSupabaseConnectModalOpen(true)} disabled={supabaseConnectLoading || supabaseChecking} className="border-zinc-300 text-zinc-700">
                 {supabaseConnectLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Connect Supabase
               </Button>
@@ -352,10 +415,19 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
                     ))}
                   </select>
                 </div>
-                <Button type="button" variant="outline" onClick={handleLinkSupabaseProject} disabled={!selectedSupabaseRef || supabaseLinking} className="border-zinc-300 text-zinc-700">
-                  {supabaseLinking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Link Project
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={() => setSupabaseProjectModalOpen(true)} disabled={supabaseLinking} className="border-zinc-300 text-zinc-700">
+                    Select Supabase Project
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleLinkSupabaseProject} disabled={!selectedSupabaseRef || supabaseLinking} className="border-zinc-300 text-zinc-700">
+                    {supabaseLinking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Link Project
+                  </Button>
+                  <Button type="button" variant="outline" onClick={generateSchemaPreview} disabled={schemaLoading} className="border-zinc-300 text-zinc-700">
+                    {schemaLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Generate Schema
+                  </Button>
+                </div>
               </div>
             )}
             {supabaseError ? <p className="text-xs text-red-600">{supabaseError}</p> : null}
@@ -420,6 +492,35 @@ export function WebsiteSettingsPanel({ projectId, initialSettings, projectName, 
           {saving ? "Saving..." : "Save Website Settings"}
         </Button>
       </div>
+
+      <SupabaseConnectModal
+        open={supabaseConnectModalOpen}
+        loading={supabaseConnectLoading}
+        error={supabaseError}
+        onClose={() => setSupabaseConnectModalOpen(false)}
+        onConnect={handleConnectSupabase}
+      />
+
+      <SupabaseProjectSelector
+        open={supabaseProjectModalOpen}
+        projects={supabaseProjects.map((p) => ({ id: p.ref, name: p.name, region: p.region }))}
+        selectedId={selectedSupabaseRef}
+        loading={supabaseLinking}
+        onClose={() => setSupabaseProjectModalOpen(false)}
+        onChange={setSelectedSupabaseRef}
+        onConfirm={handleLinkSupabaseProject}
+      />
+
+      <SchemaPreviewModal
+        open={schemaModalOpen}
+        sql={schemaSql}
+        tables={schemaTables}
+        generating={schemaLoading}
+        pushing={schemaPushLoading}
+        error={supabaseError}
+        onClose={() => setSchemaModalOpen(false)}
+        onPush={pushSchemaToSupabase}
+      />
     </div>
   )
 }
