@@ -287,69 +287,81 @@ async function ensureViteAllowedHosts(sandbox: Sandbox): Promise<void> {
     `${PROJECT_DIR}/vite.config.mts`,
     `${PROJECT_DIR}/vite.config.cjs`,
   ]
-  
+
+  let sawExistingConfig = false
+
   for (const configPath of configPaths) {
     try {
       const content = await readFileMaybe(sandbox, configPath)
       if (!content) continue
-      
-      if (content.includes("allowedHosts")) continue
-      
+      sawExistingConfig = true
+
+      if (content.includes("allowedHosts")) return
+
       let patched = content
-      // allowedHosts: true for E2B proxy; hmr.overlay: false so build errors don't block the preview iframe
-      const serverAdditions = "allowedHosts: true, hmr: { overlay: false }"
-      
-      // Try to add to existing server config
-      if (content.includes("server:")) {
-        // Match server: { ... } (first brace-balanced block so we don't break nested { })
-        if (/server\s*:\s*\{/.test(content)) {
-          if (content.includes("server: {")) {
-            patched = content.replace(
-              /(server\s*:\s*\{)([^\}]*)?(\})/,
-              (match, open, middle, close) => {
-                const existing = (middle || "").trimEnd()
-                // Avoid producing ", allowedHosts" at start of a line (invalid TS): put comma only after last character of existing content
-                const prefix = existing === "" ? " " : (existing.endsWith(",") ? " " : ", ")
-                return `${open}${existing}${prefix}${serverAdditions} ${close}`
-              }
-            )
-          }
-        }
-      } else {
-        // No server config, add one before the closing of defineConfig or export default
-        const serverConfig = `server: { ${serverAdditions} }`
-        
-        if (content.includes("export default defineConfig(")) {
-          patched = content.replace(
-            /(export default defineConfig\(\s*\{)/,
-            `$1\n  ${serverConfig},`
-          )
-        } else if (content.includes("export default {")) {
-          patched = content.replace(
-            /(export default\s*\{)/,
-            `$1\n  ${serverConfig},`
-          )
-        } else if (content.includes("export default")) {
-          // Last resort: add at the beginning
-          patched = content.replace(
-            /(export default\s+)/,
-            `$1{\n  ${serverConfig},\n  `
-          )
-          // Close the object if needed
-          if (!patched.endsWith("}")) {
-            patched = patched + "\n}"
-          }
-        }
+
+      const injectedServer = `server: {
+    host: "0.0.0.0",
+    port: ${DEV_PORT},
+    strictPort: true,
+    allowedHosts: true,
+    hmr: { overlay: false },
+  }`
+
+      if (/server\s*:\s*\{/.test(content)) {
+        patched = content.replace(/server\s*:\s*\{[\s\S]*?\}/m, (serverBlock) => {
+          const inner = serverBlock
+            .replace(/^server\s*:\s*\{/, "")
+            .replace(/\}$/, "")
+            .trim()
+            .replace(/\ballowedHosts\s*:\s*[^,}]+,?/g, "")
+            .replace(/\bhmr\s*:\s*\{[\s\S]*?\},?/g, "")
+            .replace(/\bhost\s*:\s*[^,}]+,?/g, "")
+            .replace(/\bport\s*:\s*[^,}]+,?/g, "")
+            .replace(/\bstrictPort\s*:\s*[^,}]+,?/g, "")
+            .trim()
+
+          const normalizedInner = inner
+            ? `${inner.replace(/\n/g, "\n    ").replace(/,?\s*$/, ",")}\n    `
+            : ""
+
+          return `server: {\n    ${normalizedInner}host: "0.0.0.0",\n    port: ${DEV_PORT},\n    strictPort: true,\n    allowedHosts: true,\n    hmr: { overlay: false },\n  }`
+        })
+      } else if (/export\s+default\s+defineConfig\s*\(\s*\{/.test(content)) {
+        patched = content.replace(/export\s+default\s+defineConfig\s*\(\s*\{/, (match) => `${match}\n  ${injectedServer},`)
+      } else if (/defineConfig\s*\(\s*\{/.test(content)) {
+        patched = content.replace(/defineConfig\s*\(\s*\{/, (match) => `${match}\n  ${injectedServer},`)
+      } else if (/export\s+default\s*\{/.test(content)) {
+        patched = content.replace(/export\s+default\s*\{/, (match) => `${match}\n  ${injectedServer},`)
       }
-      
+
       if (patched !== content) {
         await sandbox.files.write(configPath, patched)
         console.log(`[sandbox] Patched ${configPath} with allowedHosts and hmr.overlay: false`)
-        break
+        return
       }
     } catch (e) {
       console.warn(`[sandbox] Failed to patch ${configPath}:`, e)
     }
+  }
+
+  if (!sawExistingConfig) {
+    const fallbackConfig = `import { defineConfig } from "vite"
+import react from "@vitejs/plugin-react"
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: "0.0.0.0",
+    port: ${DEV_PORT},
+    strictPort: true,
+    allowedHosts: true,
+    hmr: { overlay: false },
+  },
+})
+`
+    await sandbox.files.write(`${PROJECT_DIR}/vite.config.ts`, fallbackConfig)
+    console.log("[sandbox] Wrote fallback vite.config.ts with allowedHosts enabled")
   }
 }
 
@@ -635,6 +647,7 @@ const VISUAL_EDIT_SCRIPT = `
       window.parent.postMessage({
         type: 'preview-select',
         id: id,
+        multi: !!(e.metaKey || e.ctrlKey),
         rect: { x: r.left, y: r.top, width: r.width, height: r.height },
         viewport: { w: window.innerWidth, h: window.innerHeight },
         description: desc,

@@ -15,33 +15,33 @@ export interface CodePanelProps {
 
 export function CodePanel({ files, selectedFile, onSelectFile, isGenerating }: CodePanelProps) {
   return (
-    <div className="h-full flex min-w-0">
+    <div className="flex h-full min-w-0 bg-[#fcfcfa]">
       <ProjectFileTree
         files={files}
         selectedFile={selectedFile}
         onSelectFile={onSelectFile}
         isGenerating={isGenerating}
       />
-      <div className="flex-1 flex flex-col bg-gradient-to-br from-[#1e1e1e] to-[#1a1a1a]">
+      <div className="flex flex-1 flex-col bg-[#fcfcfa]">
         {!selectedFile ? (
-          <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-1 items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(244,244,245,0.92),_rgba(252,252,250,1)_56%)]">
             <div className="text-center text-zinc-500">Select a file</div>
           </div>
         ) : (
           <>
-            <div className="h-10 border-b border-zinc-800/50 flex items-center px-4 bg-gradient-to-r from-zinc-900/50 to-zinc-950/50 backdrop-blur-sm shadow-sm">
-              <FileCode className={cn("w-4 h-4 mr-2", getLanguageFromPath(selectedFile.path).includes("typescript") ? "text-zinc-400" : "text-zinc-400")} />
-              <span className="text-sm text-zinc-400">{selectedFile.path}</span>
+            <div className="flex h-11 items-center border-b border-zinc-200 bg-white px-4 shadow-sm">
+              <FileCode className={cn("mr-2 h-4 w-4 text-zinc-500")} />
+              <span className="text-sm text-zinc-700">{selectedFile.path}</span>
             </div>
-            <div className="flex-1 min-h-0">
+            <div className="min-h-0 flex-1 bg-white">
               <Editor
                 height="100%"
                 language={getLanguageFromPath(selectedFile.path)}
                 value={selectedFile.content}
-                theme="vs-dark"
+                theme="vs-light"
                 loading={
-                  <div className="h-full flex items-center justify-center bg-[#1e1e1e]">
-                    <div className="text-zinc-500 text-sm">Loading editor…</div>
+                  <div className="flex h-full items-center justify-center bg-[#fcfcfa]">
+                    <div className="text-sm text-zinc-500">Loading editor...</div>
                   </div>
                 }
                 options={{
@@ -53,7 +53,7 @@ export function CodePanel({ files, selectedFile, onSelectFile, isGenerating }: C
                   wordWrap: "on",
                   automaticLayout: true,
                   padding: { top: 16 },
-                  renderLineHighlight: "none",
+                  renderLineHighlight: "line",
                   overviewRulerLanes: 0,
                   hideCursorInOverviewRuler: true,
                   overviewRulerBorder: false,

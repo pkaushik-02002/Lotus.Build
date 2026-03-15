@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import {
   AlignLeft,
   AlignCenter,
@@ -10,6 +10,7 @@ import {
   Palette,
   Layout,
   X,
+  ChevronDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -53,7 +54,25 @@ const FONT_FAMILIES = [
   "monospace",
 ]
 const FONT_WEIGHTS = ["Default", "300", "400", "500", "600", "700", "800", "bold", "normal"]
-const FONT_SIZES = ["Default", "0.75rem", "0.875rem", "1rem", "1.125rem", "1.25rem", "1.5rem", "2rem", "2.25rem", "3rem"]
+const FONT_SIZES = [
+  { label: "Default", value: "" },
+  { label: "8 pt (10.67px)", value: "10.67px" },
+  { label: "9 pt (12px)", value: "12px" },
+  { label: "10 pt (13.33px)", value: "13.33px" },
+  { label: "11 pt (14.67px)", value: "14.67px" },
+  { label: "12 pt (16px)", value: "16px" },
+  { label: "14 pt (18.67px)", value: "18.67px" },
+  { label: "16 pt (21.33px)", value: "21.33px" },
+  { label: "18 pt (24px)", value: "24px" },
+  { label: "20 pt (26.67px)", value: "26.67px" },
+  { label: "24 pt (32px)", value: "32px" },
+  { label: "28 pt (37.33px)", value: "37.33px" },
+  { label: "32 pt (42.67px)", value: "42.67px" },
+  { label: "36 pt (48px)", value: "48px" },
+  { label: "48 pt (64px)", value: "64px" },
+  { label: "72 pt (96px)", value: "96px" },
+]
+const FONT_SIZE_SUGGESTIONS = FONT_SIZES.map((size) => size.value).filter(Boolean)
 const ALIGNMENTS = [
   { value: "left", icon: AlignLeft },
   { value: "center", icon: AlignCenter },
@@ -81,6 +100,8 @@ export function VisualEditDesignPanel({
 }: VisualEditDesignPanelProps) {
   const [content, setContent] = useState(() => snapshot?.content ?? "")
   const [styles, setStyles] = useState<Record<string, string>>(() => snapshot?.styles ?? {})
+  const [showFontSizeOptions, setShowFontSizeOptions] = useState(false)
+  const stylesRef = useRef<Record<string, string>>(snapshot?.styles ?? {})
 
   // Sync from snapshot when we first get a selection (so we show actual text and styles)
   useEffect(() => {
@@ -88,16 +109,19 @@ export function VisualEditDesignPanel({
     const s = snapshot?.styles
     setContent(typeof c === "string" ? c : "")
     setStyles(s && typeof s === "object" ? { ...s } : {})
+    stylesRef.current = s && typeof s === "object" ? { ...s } : {}
+    setShowFontSizeOptions(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only sync when selection changes
   }, [selectedId])
 
   const updateStyle = useCallback(
     (key: string, value: string) => {
-      const next = { ...styles, [key]: value }
+      const next = { ...stylesRef.current, [key]: value }
+      stylesRef.current = next
       setStyles(next)
       onApply({ styles: next })
     },
-    [styles, onApply]
+    [onApply]
   )
 
   const handleContentBlur = useCallback(() => {
@@ -138,7 +162,6 @@ export function VisualEditDesignPanel({
     ([styles.marginTop, styles.marginRight, styles.marginBottom, styles.marginLeft]
       .filter(Boolean)
       .join(" ") || "")
-
   return (
     <div
       className={cn(
@@ -219,18 +242,41 @@ export function VisualEditDesignPanel({
               </div>
               <div>
                 <label className="mb-0.5 block text-[10px] text-zinc-500">Size</label>
-                <select
-                  value={fontSize || "Default"}
-                  onChange={(e) => updateStyle("fontSize", e.target.value === "Default" ? "" : e.target.value)}
-                  className="h-9 w-full rounded-lg border border-zinc-200 bg-[#f8f8f5] px-2 text-xs text-zinc-800"
-                >
-                  {fontSize && !FONT_SIZES.includes(fontSize) && (
-                    <option value={fontSize}>{fontSize}</option>
-                  )}
-                  {FONT_SIZES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <Input
+                    value={fontSize}
+                    onChange={(e) => updateStyle("fontSize", e.target.value)}
+                    onFocus={() => setShowFontSizeOptions(true)}
+                    placeholder="Choose or type a size"
+                    className="h-9 border-zinc-200 bg-[#f8f8f5] pr-8 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowFontSizeOptions((prev) => !prev)}
+                    className="absolute inset-y-0 right-0 inline-flex w-8 items-center justify-center text-zinc-500"
+                    aria-label="Open font size options"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                  {showFontSizeOptions ? (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+                      {FONT_SIZE_SUGGESTIONS.map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            updateStyle("fontSize", size)
+                            setShowFontSizeOptions(false)
+                          }}
+                          className="flex w-full items-center px-3 py-1.5 text-left text-xs text-zinc-700 hover:bg-zinc-100"
+                        >
+                          {size}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">

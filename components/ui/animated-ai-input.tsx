@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Check, Loader2, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Textarea } from "@/components/ui/textarea";
@@ -70,6 +70,72 @@ interface AnimatedAIInputProps {
   compact?: boolean;
   visualEditToggle?: { active: boolean; onToggle: () => void };
   disabled?: boolean;
+  initialModel?: string;
+  contextBadge?: { label: string; value: string; onClear?: () => void } | null;
+}
+
+const MODEL_META: Record<string, { label: string; description: string; badges: string[] }> = {
+  "o3-mini": {
+    label: "o3-mini",
+    description: "Fast reasoning model for structured edits, debugging, and technical prompts.",
+    badges: ["Reasoning", "Coding"],
+  },
+  "GPT-4-1 Mini": {
+    label: "GPT-4.1 Mini",
+    description: "Balanced default for fast site generation, UI updates, and follow-up edits.",
+    badges: ["Default", "Fast"],
+  },
+  "GPT-4-1": {
+    label: "GPT-4.1",
+    description: "Stronger general-purpose model for larger refactors and more detailed builds.",
+    badges: ["Premium", "General"],
+  },
+  "minimaxai/minimax-m2.1": {
+    label: "MiniMax M2.1",
+    description: "Multi-language coding, app and web dev, office AI, and agent-style workflows.",
+    badges: ["Open Source", "Agentic", "Multimodal"],
+  },
+  "meta/llama-3.3-70b-instruct": {
+    label: "Llama 3.3 70B",
+    description: "Strong open model for high-quality chat, coding, and instruction following.",
+    badges: ["Open Source", "Coding"],
+  },
+  "meta/llama-3.1-405b-instruct": {
+    label: "Llama 3.1 405B",
+    description: "Large open-weight model suited for deeper reasoning and larger generation tasks.",
+    badges: ["Open Source", "Reasoning"],
+  },
+  "deepseek-ai/deepseek-r1": {
+    label: "DeepSeek R1",
+    description: "Reasoning-heavy open model that performs well on planning and complex coding tasks.",
+    badges: ["Open Source", "Reasoning", "Coding"],
+  },
+  "qwen/qwen2.5-coder-32b-instruct": {
+    label: "Qwen 2.5 Coder 32B",
+    description: "Code-focused open model for implementation, debugging, and developer workflows.",
+    badges: ["Open Source", "Coding"],
+  },
+  "mistralai/mistral-small-3.1-24b-instruct": {
+    label: "Mistral Small 3.1",
+    description: "Compact open model for quick iteration, chat, and lightweight coding assistance.",
+    badges: ["Open Source", "Fast"],
+  },
+  "google/gemma-3-27b-it": {
+    label: "Gemma 3 27B",
+    description: "Instruction-tuned open model for multimodal-style workflows and general tasks.",
+    badges: ["Open Source", "Multimodal"],
+  },
+};
+
+function getModelMeta(model: string) {
+  if (MODEL_META[model]) return MODEL_META[model];
+
+  const shortName = model.split("/").pop()?.replace(/-/g, " ") || model;
+  return {
+    label: shortName.replace(/\b\w/g, (char) => char.toUpperCase()),
+    description: "Provider model available for generation and iterative product building.",
+    badges: model.includes("/") ? ["Open Model"] : ["Model"],
+  };
 }
 
 export function AnimatedAIInput({
@@ -80,6 +146,8 @@ export function AnimatedAIInput({
   compact = false,
   visualEditToggle,
   disabled = false,
+  initialModel,
+  contextBadge,
 }: AnimatedAIInputProps) {
   const router = useRouter();
   const { user, userData } = useAuth();
@@ -88,6 +156,15 @@ export function AnimatedAIInput({
   const [isFocused, setIsFocused] = useState(false);
   const [autoMode, setAutoMode] = useState(true);
   const [selectedModel, setSelectedModel] = useState("GPT-4-1 Mini");
+  const [availableModels, setAvailableModels] = useState([
+    "o3-mini",
+    "GPT-4-1 Mini",
+    "GPT-4-1",
+    "minimaxai/minimax-m2.1",
+    "meta/llama-3.3-70b-instruct",
+    "deepseek-ai/deepseek-r1",
+    "qwen/qwen2.5-coder-32b-instruct",
+  ]);
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: compact ? 88 : 132,
@@ -96,13 +173,53 @@ export function AnimatedAIInput({
 
   const isPaidUser = userData?.planId && userData.planId !== "free";
   const effectiveModel = autoMode ? "GPT-4-1 Mini" : selectedModel;
-  const AI_MODELS = ["o3-mini", "Gemini 2.5 Flash", "Claude 3.5 Sonnet", "GPT-4-1 Mini", "GPT-4-1"];
 
   const PENDING_CREATE_KEY = "buildkit_pending_create";
 
   useEffect(() => {
     if (!isPaidUser) setAutoMode(true);
   }, [isPaidUser]);
+
+  useEffect(() => {
+    if (!initialModel) return;
+
+    if (initialModel === "GPT-4-1 Mini") {
+      setAutoMode(true);
+      setSelectedModel("GPT-4-1 Mini");
+      return;
+    }
+
+    setAutoMode(false);
+    setSelectedModel(initialModel);
+    setAvailableModels((current) => (current.includes(initialModel) ? current : [...current, initialModel]));
+  }, [initialModel]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadModels = async () => {
+      try {
+        const response = await fetch("/api/generate", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const data = (await response.json()) as { models?: string[]; defaultModel?: string };
+        if (!isMounted || !Array.isArray(data.models) || data.models.length === 0) return;
+
+        setAvailableModels(data.models);
+        if (data.defaultModel && !autoMode) {
+          setSelectedModel((current) => (data.models.includes(current) ? current : data.defaultModel!));
+        }
+      } catch (error) {
+        console.error("Failed to load model list:", error);
+      }
+    };
+
+    loadModels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [autoMode]);
 
   const handleSubmit = async () => {
     if (!value.trim() || isCreating || isLoading || disabled) return;
@@ -166,6 +283,27 @@ export function AnimatedAIInput({
         )}
       >
         <div className="relative px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5">
+          {contextBadge ? (
+            <div className="mb-3 flex max-w-[calc(100%-4rem)] items-center">
+              <div className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-[#ece7dd] px-3 py-2 text-xs text-zinc-700">
+                <span className="font-medium text-[#6f6557]">{contextBadge.label}</span>
+                <span className="rounded-full bg-[#d6c3a3] px-2 py-0.5 font-medium text-[#4c3d2d]">
+                  {contextBadge.value}
+                </span>
+                {contextBadge.onClear ? (
+                  <button
+                    type="button"
+                    onClick={contextBadge.onClear}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[#8a7558] transition-colors hover:bg-[#e2d8c8] hover:text-zinc-900"
+                    aria-label="Clear selected context"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           <Textarea
             id="ai-input-hero"
             value={value}
@@ -215,31 +353,69 @@ export function AnimatedAIInput({
                   {autoMode ? "Model: Auto" : `Model: ${selectedModel}`}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-60 border-zinc-200 bg-white">
-                <DropdownMenuLabel className="text-xs font-medium text-zinc-500">Response model</DropdownMenuLabel>
+              <DropdownMenuContent
+                align="start"
+                side="top"
+                sideOffset={10}
+                avoidCollisions={false}
+                className="max-h-[24rem] w-[23rem] overflow-y-auto overscroll-contain border-zinc-200 bg-white p-2"
+              >
+                <DropdownMenuLabel className="px-2 pb-1 text-xs font-medium text-zinc-500">Response model</DropdownMenuLabel>
                 <DropdownMenuItem
                   onSelect={() => setAutoMode(true)}
-                  className="text-zinc-800 focus:bg-zinc-100"
+                  className="rounded-2xl border border-zinc-200/80 px-3 py-3 text-zinc-800 focus:bg-zinc-100"
                 >
-                  Automatic
+                  <div className="flex w-full items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-zinc-500" />
+                        <span className="text-sm font-medium text-zinc-900">Automatic</span>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-zinc-500">
+                        Uses the default balanced model for the smoothest generation flow.
+                      </p>
+                    </div>
+                    {autoMode ? <Check className="mt-0.5 h-4 w-4 text-zinc-900" /> : null}
+                  </div>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 {isPaidUser ? (
-                  AI_MODELS.map((model) => (
-                    <DropdownMenuItem
-                      key={model}
-                      onSelect={() => {
-                        setAutoMode(false);
-                        setSelectedModel(model);
-                      }}
-                      className="flex items-center justify-between gap-2 text-zinc-800 focus:bg-zinc-100"
-                    >
-                      <span>{model}</span>
-                      <span className="text-[11px] text-zinc-500">
-                        {!autoMode && selectedModel === model ? "Selected" : ""}
-                      </span>
-                    </DropdownMenuItem>
-                  ))
+                  availableModels.map((model) => {
+                    const meta = getModelMeta(model);
+                    const isSelected = !autoMode && selectedModel === model;
+
+                    return (
+                      <DropdownMenuItem
+                        key={model}
+                        onSelect={() => {
+                          setAutoMode(false);
+                          setSelectedModel(model);
+                        }}
+                        className="rounded-2xl border border-transparent px-3 py-3 text-zinc-800 focus:border-zinc-200 focus:bg-zinc-100"
+                      >
+                        <div className="flex w-full items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-zinc-900">{meta.label}</span>
+                              {meta.badges.slice(0, 2).map((badge) => (
+                                <span
+                                  key={`${model}-${badge}`}
+                                  className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500"
+                                >
+                                  {badge}
+                                </span>
+                              ))}
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">
+                              {meta.description}
+                            </p>
+                            <p className="mt-2 truncate text-[11px] text-zinc-400">{model}</p>
+                          </div>
+                          {isSelected ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-zinc-900" /> : null}
+                        </div>
+                      </DropdownMenuItem>
+                    );
+                  })
                 ) : (
                   <div className="px-2 py-2">
                     <p className="text-xs text-zinc-600">Custom model choice is available on paid plans.</p>

@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-import { useEffect, useState, useRef, useCallback } from "react"
+import { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { doc, getDoc, updateDoc, onSnapshot, collection, addDoc, serverTimestamp, deleteField } from "firebase/firestore"
 import { db } from "@/lib/firebase"
@@ -57,13 +57,21 @@ import {
   Key
 } from "lucide-react"
 import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
-import { Steps, StepsContent, StepsItem, StepsTrigger } from "@/components/prompt-kit/steps"
-import { Tool } from "@/components/prompt-kit/tool"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
 import { BuildTimeline, type TimelineStep } from "@/components/preview/build-timeline"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
@@ -81,6 +89,7 @@ import type { GeneratedFile, Message, Project, ProjectVisibility } from "./types
 import { extractAgentMessage } from "./utils"
 import { ProjectErrorBoundary, ChatMessage, CodePanel, ResponsivePreview, BrowserNavigator } from "@/components/project"
 import { WebsiteSettingsPanel } from "@/components/project/website-settings-panel"
+import { VisualEditDesignPanel, type DesignSnapshot } from "@/components/project/visual-edit-design-panel"
 
 // Persists across Strict Mode remounts so only one sandbox run can update logs
 let sandboxRunIdCounter = 0
@@ -138,6 +147,15 @@ function ProjectContent() {
   const [mobileTab, setMobileTab] = useState<"chat" | "preview">("chat")
   const [visualEditActive, setVisualEditActive] = useState(false)
   const [editingContextLabel, setEditingContextLabel] = useState<string | null>(null)
+  const [selectedElementDescription, setSelectedElementDescription] = useState<string | null>(null)
+  const [selectedElementCount, setSelectedElementCount] = useState(0)
+  const [selectedVisualEditElement, setSelectedVisualEditElement] = useState<{
+    id: string
+    description: string | null
+    initial: DesignSnapshot
+  } | null>(null)
+  const [visualEditDraft, setVisualEditDraft] = useState<DesignSnapshot | null>(null)
+  const [visualEditConfirmAction, setVisualEditConfirmAction] = useState<null | "exit" | "clear">(null)
   const [deployOpen, setDeployOpen] = useState(false)
   const [websiteSettingsOpen, setWebsiteSettingsOpen] = useState(false)
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
@@ -248,29 +266,130 @@ function ProjectContent() {
         "Applying changes and validating output.",
         "Finalizing and preparing preview.",
       ]
-  const activeToolPart = currentGeneratingFile
-    ? {
-        type: "write_file",
-        state: isGenerating ? "input-available" : "output-available",
-        input: {
-          file: currentGeneratingFile,
-          intent: "Applying content and UI updates",
-        },
-      }
-    : {
-        type: "reasoning",
-        state: isGenerating ? "input-streaming" : "output-available",
-        input: {
-          status: agentStatus || "Making updates",
-        },
-      }
-
-
   const getAuthHeader = useCallback(async () => {
     if (!user) throw new Error("Not authenticated")
     const token = await user.getIdToken()
     return { Authorization: `Bearer ${token}` }
   }, [user])
+
+  const usesNvidiaVerificationGate = useCallback((model?: string) => {
+    if (!model) return false
+    return !["GPT-4-1 Mini", "GPT-4-1", "o3-mini"].includes(model)
+  }, [])
+
+  const verifyFilesInSandbox = useCallback(async (files: GeneratedFile[]) => {
+    const authHeader = await getAuthHeader()
+    const res = await fetch("/api/sandbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader },
+      body: JSON.stringify({ files }),
+    })
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "Sandbox verification failed")
+      return { ok: false as const, error: errorText, logsTail: "" }
+    }
+
+    const reader = res.body?.getReader()
+    if (!reader) {
+      return { ok: false as const, error: "Sandbox verification returned no body", logsTail: "" }
+    }
+
+    const decoder = new TextDecoder()
+    let lineBuffer = ""
+    let logsTail = ""
+    let sandboxId: string | null = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      logsTail += chunk
+      lineBuffer += chunk
+
+      const lines = lineBuffer.split("\n")
+      lineBuffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const data = JSON.parse(line)
+          if (data.type === "success" && data.sandboxId) {
+            sandboxId = String(data.sandboxId)
+            if (sandboxId) {
+              await fetch("/api/sandbox", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sandboxId }),
+              }).catch(() => {})
+            }
+            return { ok: true as const, logsTail }
+          }
+          if (data.type === "error") {
+            return {
+              ok: false as const,
+              error: String(data.error || "Sandbox verification failed"),
+              logsTail,
+            }
+          }
+        } catch {
+          // ignore malformed line fragments during stream parsing
+        }
+      }
+    }
+
+    if (sandboxId) {
+      await fetch("/api/sandbox", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sandboxId }),
+      }).catch(() => {})
+    }
+
+    return { ok: false as const, error: "Sandbox verification ended without a result", logsTail }
+  }, [getAuthHeader])
+
+  const agentTimeline = useMemo(() => {
+    const base = [
+      {
+        key: "analyze",
+        title: "Understanding your request",
+        description: "Reviewing the prompt, website context, and current project files.",
+      },
+      {
+        key: "plan",
+        title: "Planning the update",
+        description: "Choosing components, layout changes, and implementation steps.",
+      },
+      {
+        key: "build",
+        title: "Generating files",
+        description: currentGeneratingFile
+          ? `Working on ${currentGeneratingFile}`
+          : "Writing and updating the files needed for this change.",
+      },
+      {
+        key: "finalize",
+        title: "Finalizing output",
+        description: "Wrapping up the response and preparing the updated website state.",
+      },
+    ] as const
+
+    const normalized = reasoningSteps.map((step) => step.toLowerCase())
+    const currentStage =
+      agentStatus.toLowerCase().includes("final") ? 3
+      : normalized.some((step) => step.includes("creating files")) || !!currentGeneratingFile ? 2
+      : normalized.length >= 2 ? 1
+      : 0
+
+    return base.map((step, index) => ({
+      ...step,
+      status: index < currentStage ? "complete" : index === currentStage ? "active" : "pending",
+    }))
+  }, [agentStatus, currentGeneratingFile, reasoningSteps])
+
+  const generatedFileCount = generatingFiles.length
 
   const ensurePreviewEnvironment = useCallback(async (force = false) => {
     if (!projectId || !user) return null
@@ -1494,6 +1613,47 @@ function ProjectContent() {
       
       const suggestsBackend = /===META:\s*suggestsBackend\s*=\s*true\s*===/i.test(fullContent)
 
+      if (usesNvidiaVerificationGate(model)) {
+        setAgentStatus("Verifying generated app in sandbox...")
+        setReasoningSteps(prev => [...prev, "Verifying generated output in sandbox."])
+
+        const firstVerification = await verifyFilesInSandbox(finalFiles)
+        if (!firstVerification.ok) {
+          setAgentStatus("Repairing issues found during verification...")
+          setReasoningSteps(prev => [...prev, "Repairing build issues before delivery."])
+
+          const authHeader = await getAuthHeader()
+          const repairRes = await fetch("/api/error/fix", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...authHeader,
+            },
+            body: JSON.stringify({
+              files: finalFiles,
+              error: firstVerification.error || "Sandbox verification failed",
+              failureCategory: "build",
+              failureReason: "Sandbox verification failed",
+              logsTail: firstVerification.logsTail?.slice(-12000) || "",
+            }),
+          })
+
+          const repairJson = await repairRes.json().catch(() => ({}))
+          if (!repairRes.ok || !repairJson?.success || !Array.isArray(repairJson.files) || repairJson.files.length === 0) {
+            throw new Error(repairJson?.error || "Automatic verification repair failed")
+          }
+
+          finalFiles = repairJson.files
+
+          setAgentStatus("Re-verifying repaired app in sandbox...")
+          setReasoningSteps(prev => [...prev, "Re-verifying repaired output in sandbox."])
+          const secondVerification = await verifyFilesInSandbox(finalFiles)
+          if (!secondVerification.ok) {
+            throw new Error(secondVerification.error || "Repaired output still failed sandbox verification")
+          }
+        }
+      }
+
       setAgentStatus("Finalizing...")
       setReasoningSteps(prev => [...prev, "Finalizing and preparing preview."])
 
@@ -1914,7 +2074,12 @@ function ProjectContent() {
       return
     }
 
-    const userMessage = nextMessage
+    const contextualUserMessage = selectedElementDescription
+      ? selectedElementCount > 1
+        ? `Update these selected website elements (${selectedElementDescription}): ${nextMessage}`
+        : `Update this selected website element (${selectedElementDescription}): ${nextMessage}`
+      : nextMessage
+    const userMessage = contextualUserMessage
     setChatInput("")
     if (textareaRef.current) {
       textareaRef.current.style.height = "48px"
@@ -1929,7 +2094,12 @@ function ProjectContent() {
     })
 
     const fullPrompt = `Original request: ${project.prompt}\n\nUser wants these modifications: ${userMessage}`
-    await generateCode(fullPrompt, project.model)
+    await generateCode(fullPrompt, submittedModel || project.model)
+    setSelectedElementDescription(null)
+    setSelectedElementCount(0)
+    setEditingContextLabel(null)
+    setSelectedVisualEditElement(null)
+    setVisualEditDraft(null)
   }
 
   const handleManualVisualSave = useCallback(async (payload: {
@@ -1940,32 +2110,122 @@ function ProjectContent() {
   }) => {
     if (!project || !canEdit || isGenerating) return
 
-    const prompt = [
-      "Apply the following manual visual edit to the project source code so it persists in the app (not runtime-only DOM).",
-      "Target the component/page that renders the selected element and keep unrelated code unchanged.",
+    const nextPrompt = [
+      "Persist this exact manual visual edit into the project source code.",
+      "This is not a redesign request. Treat the edited snapshot as the source of truth and make the minimum code changes required to match it exactly.",
+      "Update only the component or page that renders this selected element.",
       "",
       `Selected element: ${payload.description || payload.id}`,
       "",
-      "Original selected snapshot (before edit):",
+      "Before edit snapshot:",
       "```json",
       JSON.stringify(payload.initial, null, 2),
       "```",
       "",
-      "Edited target snapshot (after edit):",
+      "After edit snapshot that must be matched exactly:",
       "```json",
       JSON.stringify(payload.current, null, 2),
       "```",
       "",
-      "Requirements:",
-      "- Persist content and style updates in source files.",
-      "- If styles are from utility classes, update classes/CSS appropriately rather than using brittle runtime hacks.",
-      "- Preserve existing design system and theme.",
+      "Rules:",
+      "- Preserve the current content, colors, typography, spacing, and styles from the edited snapshot.",
+      "- Do not reinterpret or redesign the element.",
+      "- If the project uses utility classes, update classes so the rendered result matches the edited snapshot.",
+      "- If the project uses CSS or inline styles, update those source files instead.",
+      "- Keep unrelated code unchanged.",
       "- Return only changed files.",
     ].join("\n")
 
-    await handleSendMessage(prompt)
-  }, [project, canEdit, isGenerating, handleSendMessage])
+    const projectRef = doc(db, "projects", projectId)
+    const manualSaveMessage = {
+      role: "user" as const,
+      content: `Saved manual visual edit for ${payload.description || payload.id}. Persisting those changes to source code.`,
+    }
 
+    await updateDoc(projectRef, {
+      messages: [
+        ...(project.messages || []),
+        manualSaveMessage,
+      ]
+    })
+
+    setProject((prev) => (
+      prev
+        ? {
+            ...prev,
+            messages: [...(prev.messages || []), manualSaveMessage],
+          }
+        : prev
+    ))
+
+    setSelectedVisualEditElement((prev) => (
+      prev && prev.id === payload.id
+        ? {
+            ...prev,
+            initial: payload.current,
+          }
+        : prev
+    ))
+    setVisualEditDraft(payload.current)
+
+    await generateCode(`Original request: ${project.prompt}\n\nUser wants these modifications: ${nextPrompt}`, project.model)
+  }, [project, canEdit, isGenerating, generateCode, projectId])
+
+  const isSameDesignSnapshot = useCallback((a: DesignSnapshot | null, b: DesignSnapshot | null) => {
+    if (!a || !b) return false
+
+    const normalizeStyles = (styles?: Record<string, string>) => {
+      const out: Record<string, string> = {}
+      if (!styles) return out
+      for (const [key, value] of Object.entries(styles)) {
+        if (typeof value === "string" && value.trim() !== "") out[key] = value
+      }
+      return out
+    }
+
+    return (
+      (a.content ?? "") === (b.content ?? "") &&
+      JSON.stringify(normalizeStyles(a.styles)) === JSON.stringify(normalizeStyles(b.styles))
+    )
+  }, [])
+
+  const hasUnsavedVisualEditChanges = useCallback(() => {
+    if (!selectedVisualEditElement || !visualEditDraft) return false
+    return !isSameDesignSnapshot(selectedVisualEditElement.initial, visualEditDraft)
+  }, [isSameDesignSnapshot, selectedVisualEditElement, visualEditDraft])
+
+  const clearVisualEditSelection = useCallback(() => {
+    setSelectedElementDescription(null)
+    setSelectedElementCount(0)
+    setEditingContextLabel(null)
+    setSelectedVisualEditElement(null)
+    setVisualEditDraft(null)
+  }, [])
+
+  const requestVisualEditExit = useCallback(() => {
+    if (hasUnsavedVisualEditChanges()) {
+      setVisualEditConfirmAction("exit")
+      return false
+    }
+
+    setVisualEditActive(false)
+    clearVisualEditSelection()
+    return true
+  }, [clearVisualEditSelection, hasUnsavedVisualEditChanges])
+
+  const requestVisualEditClear = useCallback(() => {
+    if (hasUnsavedVisualEditChanges()) {
+      setVisualEditConfirmAction("clear")
+      return false
+    }
+
+    clearVisualEditSelection()
+    return true
+  }, [clearVisualEditSelection, hasUnsavedVisualEditChanges])
+
+  const exitVisualEdit = useCallback(() => {
+    return requestVisualEditExit()
+  }, [requestVisualEditExit])
 
   const copyCode = async () => {
     if (selectedFile) {
@@ -2025,6 +2285,70 @@ function ProjectContent() {
     return short ? `Editing ${short}` : null
   }, [])
 
+  const handleVisualSelectionChange = useCallback((selection: {
+    descriptions: string[]
+    primary?: {
+      id: string
+      description: string | null
+      snapshot: DesignSnapshot
+    }
+  } | null) => {
+    const descriptions = selection?.descriptions || []
+    const combined = descriptions.join("; ")
+
+    setSelectedElementDescription(combined || null)
+    setSelectedElementCount(descriptions.length)
+    setEditingContextLabel(
+      descriptions.length > 1
+        ? `Editing ${descriptions.length} selected elements`
+        : combined
+          ? describeEditingContext(combined)
+          : null
+    )
+
+    if (selection?.primary) {
+      setSelectedVisualEditElement({
+        id: selection.primary.id,
+        description: selection.primary.description,
+        initial: selection.primary.snapshot,
+      })
+      setVisualEditDraft(selection.primary.snapshot)
+    } else {
+      setSelectedVisualEditElement(null)
+      setVisualEditDraft(null)
+    }
+  }, [describeEditingContext])
+
+  const getSelectionBadgeValue = useCallback((raw: string | null | undefined) => {
+    if (!raw) return "Element"
+    const text = typeof raw === "string" ? raw.trim() : String(raw).trim()
+
+    if (/\bh1\b/i.test(text) || /heading 1/i.test(text)) return "H1"
+    if (/\bh2\b/i.test(text) || /heading 2/i.test(text)) return "H2"
+    if (/\bh3\b/i.test(text) || /heading 3/i.test(text)) return "H3"
+    if (/\bbutton\b/i.test(text)) return "Button"
+    if (/\binput\b|\bfield\b/i.test(text)) return "Input"
+    if (/\bimage\b|\bimg\b/i.test(text)) return "Image"
+
+    const paragraphNumber = text.match(/\bp(?:aragraph)?\s*(\d+)\b/i)?.[1]
+    if (paragraphNumber) return `P${paragraphNumber}`
+    if (/^["']?.{20,}/.test(text) || /\bparagraph\b/i.test(text)) return "P1"
+
+    const compact = text
+      .replace(/^["']|["']$/g, "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" ")
+
+    return compact || "Element"
+  }, [])
+
+  const getSelectionBadgeDisplay = useCallback((raw: string | null | undefined, count: number) => {
+    if (count > 1) return `${count} Elements`
+    return getSelectionBadgeValue(raw)
+  }, [getSelectionBadgeValue])
+
   const quickActionChips = [
     "Improve headline",
     "Add pricing section",
@@ -2036,6 +2360,8 @@ function ProjectContent() {
   const contextualChips = editingContextLabel
     ? quickActionChips.map((chip) => `${chip} in this section`)
     : quickActionChips
+
+  const isVisualEditPanelMode = visualEditActive && selectedVisualEditElement && selectedElementCount === 1 && visualEditDraft
 
   // Combine project files with generating files
   const displayFiles = isGenerating ? generatingFiles : (project?.files || [])
@@ -2172,10 +2498,133 @@ function ProjectContent() {
             mobileTab !== "chat" && "hidden lg:flex"
           )}>
             <div className="border-b border-zinc-100 px-4 py-3 sm:px-5 sm:py-4">
-              <p className="text-sm font-semibold tracking-wide text-zinc-800">Conversation</p>
-              <p className="mt-1 text-xs text-zinc-500">{editingContextLabel || "Editing entire website"}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold tracking-wide text-zinc-800">Conversation</p>
+                <p className="mt-1 text-xs text-zinc-500">{editingContextLabel || "Editing entire website"}</p>
+              </div>
             </div>
 
+            {isVisualEditPanelMode ? (
+              <>
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
+                <div className="overflow-hidden rounded-[24px] border border-zinc-200 bg-[#f5f5f2]">
+                  <div className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 rounded-full px-0 text-xs text-zinc-600 hover:bg-transparent hover:text-zinc-900"
+                      onClick={exitVisualEdit}
+                    >
+                      <ArrowLeft className="mr-1 h-3.5 w-3.5" />
+                      Back to Chat
+                    </Button>
+                    <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">Visual Edit</span>
+                  </div>
+
+                  <VisualEditDesignPanel
+                    key={selectedVisualEditElement!.id}
+                    className="border-l-0"
+                    selectedId={selectedVisualEditElement!.id}
+                    description={selectedVisualEditElement!.description}
+                    snapshot={selectedVisualEditElement!.initial}
+                    onApply={(draft) => {
+                      setVisualEditDraft((prev) => {
+                        const base = prev ?? selectedVisualEditElement!.initial
+                        return {
+                          content: draft.content !== undefined ? draft.content : base.content,
+                          styles: draft.styles !== undefined ? draft.styles : base.styles,
+                        }
+                      })
+                    }}
+                    onClose={() => {
+                      requestVisualEditClear()
+                    }}
+                  />
+
+                  <div className="border-t border-zinc-200 bg-white p-3">
+                    <p className="text-xs text-zinc-500">
+                      Fine-tune the selected element here, or ask the AI below to update it with context.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mt-3 h-9 rounded-lg border-zinc-300 bg-white text-xs text-zinc-700 hover:bg-zinc-100"
+                      disabled={
+                        isGenerating ||
+                        isSameDesignSnapshot(selectedVisualEditElement!.initial, visualEditDraft)
+                      }
+                      onClick={() => handleManualVisualSave({
+                        id: selectedVisualEditElement!.id,
+                        description: selectedVisualEditElement!.description,
+                        initial: selectedVisualEditElement!.initial,
+                        current: visualEditDraft!,
+                      })}
+                    >
+                      {isGenerating ? "Saving..." : "Save changes"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              {canEdit ? (
+                <div className="border-t border-zinc-100 p-2.5 sm:p-3">
+                  {remainingTokens <= 0 && (
+                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                      <p className="text-sm font-medium text-amber-900">Youâ€™ve used all credits for this cycle.</p>
+                      <p className="mt-0.5 text-xs text-amber-800">
+                        Upgrade your plan to continue generating website updates.
+                        {" "}
+                        <Link href="/pricing" className="font-semibold underline underline-offset-2">
+                          View plans
+                        </Link>
+                      </p>
+                    </div>
+                  )}
+                  <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                    {contextualChips.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => handleSendMessage(chip)}
+                        disabled={!canEdit || isGenerating || remainingTokens <= 0}
+                        className="whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                  <AnimatedAIInput
+                    mode="chat"
+                    compact
+                    isLoading={isGenerating}
+                    placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
+                    onSubmit={(value, model) => handleSendMessage(value, model)}
+                    disabled={remainingTokens <= 0}
+                    initialModel={project?.model}
+                    visualEditToggle={{
+                      active: visualEditActive,
+                      onToggle: () => {
+                        if (visualEditActive) {
+                          exitVisualEdit()
+                          return
+                        }
+                        setVisualEditActive(true)
+                      },
+                    }}
+                    contextBadge={selectedElementDescription ? {
+                      label: "Design",
+                      value: getSelectionBadgeDisplay(selectedElementDescription, selectedElementCount),
+                      onClear: requestVisualEditClear,
+                    } : null}
+                  />
+                </div>
+              ) : (
+                <div className="border-t border-zinc-100 p-3 text-center text-xs text-zinc-500">View only</div>
+              )}
+              </>
+            ) : (
+              <>
             <div className="h-[32vh] min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:h-[38vh] sm:px-5 sm:py-5 lg:h-auto">
               <div className="group mr-auto max-w-[90%]">
                 {editingTarget?.kind === "prompt" ? (
@@ -2327,26 +2776,109 @@ function ProjectContent() {
                 </div>
               ))}
                 {isGenerating && (
-                  <div className="space-y-3 rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3 sm:p-4">
-                    <TextShimmer className="text-sm text-zinc-700">{agentStatus || "Deep thinking and generating timeline updates"}</TextShimmer>
+                  <div className="overflow-hidden rounded-[1.5rem] border border-zinc-200 bg-white shadow-[0_20px_70px_-36px_rgba(24,24,27,0.42)]">
+                    <div className="border-b border-zinc-100 bg-[radial-gradient(circle_at_top_left,_rgba(244,244,245,0.95),_rgba(255,255,255,0.98)_58%)] px-4 py-4">
+                      <div className="flex flex-col gap-3">
+                        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-zinc-200 bg-white/90 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                          Agent Run Live
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-zinc-900">
+                            Building your update with a clearer live timeline
+                          </p>
+                          <TextShimmer className="text-sm text-zinc-600">
+                            {agentStatus || "Preparing the next implementation step"}
+                          </TextShimmer>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                          <div className="rounded-2xl border border-zinc-200 bg-white px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-400">Progress</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">
+                              {Math.min(
+                                agentTimeline.filter((step) => step.status === "complete").length + 1,
+                                agentTimeline.length
+                              )}/{agentTimeline.length}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-zinc-200 bg-white px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-400">Files</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">{generatedFileCount}</p>
+                          </div>
+                          <div className="col-span-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-400">Current file</p>
+                            <p className="mt-1 truncate text-sm font-medium text-zinc-900">
+                              {currentGeneratingFile || "Choosing the next file to update"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-                    <Steps defaultOpen>
-                      <StepsTrigger>Agent run: Update website timeline and content</StepsTrigger>
-                      <StepsContent>
-                        <div className="space-y-2">
-                          {runSteps.map((step, idx) => {
-                            const shouldShimmer = isGenerating && (idx === runSteps.length - 1 || /^(creating|updating|editing|writing)\b/i.test(step))
+                    <div className="space-y-4 px-4 py-4">
+                      <div className="rounded-[1.25rem] border border-zinc-200 bg-zinc-50/70 p-3 sm:p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Timeline</p>
+                        <p className="mt-1 text-sm text-zinc-600">Follow what the agent is doing without losing context.</p>
+
+                        <div className="mt-4 space-y-3">
+                          {agentTimeline.map((step, idx) => {
+                            const isActive = step.status === "active"
+                            const isComplete = step.status === "complete"
+                            const isPending = step.status === "pending"
+
                             return (
-                              <StepsItem key={`${step}-${idx}`} className={idx === runSteps.length - 1 ? "text-zinc-800" : undefined}>
-                                {shouldShimmer ? <TextShimmer className="text-inherit">{step}</TextShimmer> : step}
-                              </StepsItem>
+                              <div key={step.key} className="relative flex items-start gap-3">
+                                {idx < agentTimeline.length - 1 ? (
+                                  <div className="absolute left-3 top-8 h-[calc(100%-0.25rem)] w-px bg-zinc-200" />
+                                ) : null}
+                                <div className="relative z-10 mt-0.5 shrink-0">
+                                  {isComplete ? (
+                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-white">
+                                      <Check className="h-3.5 w-3.5" />
+                                    </div>
+                                  ) : (
+                                    <div className="h-6 w-6 rounded-full border border-zinc-300 bg-white" />
+                                  )}
+                                </div>
+                                <div
+                                  className={cn(
+                                    "min-w-0 flex-1 rounded-2xl border px-3 py-3",
+                                    isActive && "border-zinc-300 bg-white shadow-sm",
+                                    isComplete && "border-emerald-200 bg-emerald-50/70",
+                                    isPending && "border-zinc-200 bg-white/70"
+                                  )}
+                                >
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <TextShimmer
+                                      className={cn(
+                                        "bg-gradient-to-r from-zinc-700 via-zinc-400 to-zinc-700 text-sm font-medium",
+                                        isActive ? "from-zinc-950 via-zinc-500 to-zinc-950" : undefined
+                                      )}
+                                    >
+                                      {step.title}
+                                    </TextShimmer>
+                                    <span
+                                      className={cn(
+                                        "w-fit rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em]",
+                                        isComplete && "bg-emerald-100 text-emerald-700",
+                                        isActive && "bg-zinc-900 text-white",
+                                        isPending && "bg-zinc-100 text-zinc-500"
+                                      )}
+                                    >
+                                      {isComplete ? "Done" : isActive ? "In progress" : "Queued"}
+                                    </span>
+                                  </div>
+                                  <TextShimmer className="mt-1 bg-gradient-to-r from-zinc-600 via-zinc-400 to-zinc-600 text-xs">
+                                    {step.description}
+                                  </TextShimmer>
+                                </div>
+                              </div>
                             )
                           })}
                         </div>
-                      </StepsContent>
-                    </Steps>
+                      </div>
 
-                    <Tool className="w-full" toolPart={activeToolPart} />
+                    </div>
                   </div>
                 )}
               <div ref={messagesEndRef} />
@@ -2386,14 +2918,28 @@ function ProjectContent() {
                   placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
                   onSubmit={(value, model) => handleSendMessage(value, model)}
                   disabled={remainingTokens <= 0}
+                  initialModel={project?.model}
                   visualEditToggle={{
                     active: visualEditActive,
-                    onToggle: () => setVisualEditActive((v) => !v),
+                    onToggle: () => {
+                      if (visualEditActive) {
+                        exitVisualEdit()
+                        return
+                      }
+                      setVisualEditActive(true)
+                    },
                   }}
+                  contextBadge={selectedElementDescription ? {
+                    label: "Design",
+                    value: getSelectionBadgeDisplay(selectedElementDescription, selectedElementCount),
+                    onClear: requestVisualEditClear,
+                  } : null}
                 />
               </div>
             ) : (
               <div className="border-t border-zinc-100 p-3 text-center text-xs text-zinc-500">View only</div>
+            )}
+              </>
             )}
           </section>
 
@@ -2404,23 +2950,53 @@ function ProjectContent() {
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 sm:px-5 sm:py-4">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold tracking-wide text-zinc-800">Live Website</p>
-                  <p className="mt-1 truncate text-xs text-zinc-500">Select a section in the preview to edit with context.</p>
+                  <p className="text-sm font-semibold tracking-wide text-zinc-800">
+                    {activeTab === "code" ? "Project Code" : "Live Website"}
+                  </p>
+                  <p className="mt-1 truncate text-xs text-zinc-500">
+                    {activeTab === "code"
+                      ? "Browse the project file tree and inspect generated source code."
+                      : "Select a section in the preview to edit with context."}
+                  </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  <div className="inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("preview")}
+                      className={cn(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                        activeTab === "preview" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-white"
+                      )}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("code")}
+                      className={cn(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                        activeTab === "code" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-white"
+                      )}
+                    >
+                      Code
+                    </button>
+                  </div>
                   <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100 lg:hidden" onClick={() => setWebsiteSettingsOpen(true)}>
                     Website Settings
                   </Button>
                   <Button type="button" size="sm" className="h-9 rounded-lg bg-[#1f1f1f] px-3 text-white hover:bg-black lg:hidden" onClick={() => setDeployOpen(true)}>
                     Go Live
                   </Button>
-                  <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100" onClick={handlePreviewReload}>
-                    Refresh
-                  </Button>
+                  {activeTab === "preview" && (
+                    <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100" onClick={handlePreviewReload}>
+                      Refresh
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="relative min-h-0 flex-1 overflow-hidden">
-                {((isSandboxLoading || !!buildError) && !isTimelineCollapsed) && (
+                {activeTab === "preview" && ((isSandboxLoading || !!buildError) && !isTimelineCollapsed) && (
                   <BuildTimeline
                     className="p-4 sm:p-6"
                     steps={buildSteps}
@@ -2434,23 +3010,27 @@ function ProjectContent() {
                     isFixing={isFixing}
                   />
                 )}
-                {resolvedPreviewUrl ? (
+                {activeTab === "code" ? (
+                  <CodePanel
+                    files={displayFiles}
+                    selectedFile={selectedFile}
+                    onSelectFile={setSelectedFile}
+                    isGenerating={isGenerating}
+                  />
+                ) : resolvedPreviewUrl ? (
                   <ResponsivePreview
                     src={resolvedPreviewUrl}
                     canEdit={canEdit}
                     enabled={visualEditActive}
-                    onSaveManualEdit={handleManualVisualSave}
-                    isSavingManualEdit={isGenerating}
+                    externalDraft={
+                      visualEditActive && selectedVisualEditElement && visualEditDraft
+                        ? { id: selectedVisualEditElement.id, snapshot: visualEditDraft }
+                        : null
+                    }
                     onIframeNavigate={handlePreviewNavigate}
+                    onSelectionChange={handleVisualSelectionChange}
                     selectedDevice={previewDevice}
                     onDeviceChange={setPreviewDevice}
-                    onEditWithAI={(description, userRequest) => {
-                      setEditingContextLabel(describeEditingContext(description))
-                      const prompt = userRequest
-                        ? `Update this website section (${description}): ${userRequest}`
-                        : `Improve this website section (${description}) with a premium, founder-focused tone.`
-                      handleSendMessage(prompt)
-                    }}
                     className="h-full w-full"
                     iframeKey={previewKey}
                   />
@@ -2502,94 +3082,312 @@ function ProjectContent() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog
+        open={visualEditConfirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setVisualEditConfirmAction(null)
+        }}
+      >
+        <AlertDialogContent className="border-zinc-200 bg-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-zinc-900">Discard visual edits?</AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-600">
+              You have unsaved visual edits. If you leave now, those manual changes will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+              onClick={() => setVisualEditConfirmAction(null)}
+            >
+              Keep editing
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-zinc-900 text-white hover:bg-black"
+              onClick={() => {
+                const nextAction = visualEditConfirmAction
+                setVisualEditConfirmAction(null)
+                if (nextAction === "exit") {
+                  setVisualEditActive(false)
+                  clearVisualEditSelection()
+                } else if (nextAction === "clear") {
+                  clearVisualEditSelection()
+                }
+              }}
+            >
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Dialog open={deployOpen} onOpenChange={setDeployOpen}>
-        <DialogContent className="max-w-md border-zinc-200 bg-white">
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] overflow-hidden border-zinc-200 bg-[#f8f8f5] p-0 sm:max-w-4xl">
           <DialogHeader>
-            <DialogTitle className="text-zinc-900">Go Live</DialogTitle>
-            <DialogDescription className="text-zinc-600">Publish your website and share it with customers.</DialogDescription>
+            <div className="border-b border-zinc-200 bg-[radial-gradient(circle_at_top_left,_rgba(244,244,245,0.95),_rgba(255,255,255,0.98)_58%)] px-5 py-5 sm:px-7 sm:py-6">
+              <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Publish
+              </div>
+              <DialogTitle className="mt-4 text-xl text-zinc-900 sm:text-2xl">Go Live</DialogTitle>
+              <DialogDescription className="mt-2 max-w-2xl text-sm text-zinc-600 sm:text-base">
+                Publish your website with a cleaner deployment flow, compare providers, and share your live URL once it is ready.
+              </DialogDescription>
+            </div>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-              <p className="text-xs uppercase tracking-wider text-zinc-500">Netlify</p>
-              {deployLinks?.siteUrl ? (
-                <a href={deployLinks.siteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-black">
-                  {deployLinks.siteUrl}
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              ) : (
-                <p className="mt-1 text-sm text-zinc-500">Not published yet.</p>
-              )}
-              <Button
-                type="button"
-                className="mt-3 w-full bg-[#1f1f1f] text-white hover:bg-black"
-                onClick={handleDeployToNetlify}
-                disabled={isDeploying}
-              >
-                {isDeploying ? "Publishing..." : deployLinks?.siteUrl ? "Republish with Netlify" : "Publish with Netlify"}
-              </Button>
-              {(isDeploying || deployLogs.length > 0 || deployStep) && (
-                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-2">
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-[11px] uppercase tracking-wider text-zinc-500">Build Log</p>
-                    {deployStep ? <p className="text-[11px] text-zinc-500">Step: {deployStep}</p> : null}
-                  </div>
-                  <div className="max-h-36 overflow-auto rounded-md bg-zinc-50 p-2 text-[11px] leading-5 text-zinc-700">
-                    {deployLogs.length === 0 ? (
-                      <p className="text-zinc-500">Starting publish...</p>
-                    ) : (
-                      deployLogs.slice(-120).map((line, i) => (
-                        <p key={`netlify-log-${i}`} className="whitespace-pre-wrap break-words">
-                          {line}
-                        </p>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
+          <div className="space-y-4 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+            <div className="flex justify-center sm:justify-start">
+              <div className="grid w-full max-w-md grid-cols-2 rounded-xl border border-zinc-200 bg-white p-1 sm:inline-flex sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setDeployTab("netlify")}
+                  className={cn(
+                    "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                    deployTab === "netlify" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"
+                  )}
+                >
+                  Netlify
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeployTab("vercel")}
+                  className={cn(
+                    "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                    deployTab === "vercel" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"
+                  )}
+                >
+                  Vercel
+                </button>
+              </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-              <p className="text-xs uppercase tracking-wider text-zinc-500">Vercel</p>
-              {vercelDeployLinks?.siteUrl ? (
-                <a href={vercelDeployLinks.siteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-zinc-900 hover:text-black">
-                  {vercelDeployLinks.siteUrl}
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              ) : (
-                <p className="mt-1 text-sm text-zinc-500">Not published yet.</p>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-3 w-full border-zinc-300 text-zinc-700"
-                onClick={handleDeployToVercel}
-                disabled={isVercelDeploying}
-              >
-                {isVercelDeploying ? "Publishing..." : vercelDeployLinks?.siteUrl ? "Republish with Vercel" : "Publish with Vercel"}
-              </Button>
-              {(isVercelDeploying || vercelDeployLogs.length > 0 || vercelDeployStep) && (
-                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-2">
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-[11px] uppercase tracking-wider text-zinc-500">Build Log</p>
-                    {vercelDeployStep ? <p className="text-[11px] text-zinc-500">Step: {vercelDeployStep}</p> : null}
-                  </div>
-                  <div className="max-h-36 overflow-auto rounded-md bg-zinc-50 p-2 text-[11px] leading-5 text-zinc-700">
-                    {vercelDeployLogs.length === 0 ? (
-                      <p className="text-zinc-500">Starting publish...</p>
-                    ) : (
-                      vercelDeployLogs.slice(-120).map((line, i) => (
-                        <p key={`vercel-log-${i}`} className="whitespace-pre-wrap break-words">
-                          {line}
-                        </p>
-                      ))
-                    )}
+            {deployTab === "netlify" ? (
+              <div className="overflow-hidden rounded-[1.5rem] border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-100 bg-zinc-50/80 px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Netlify</p>
+                      <p className="mt-1 text-sm text-zinc-600">Fast publishing with a simple live URL and redeploy flow.</p>
+                    </div>
+                    <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+                      Recommended
+                    </span>
                   </div>
                 </div>
-              )}
-            </div>
+                <div className="space-y-4 px-4 py-4">
+                  {deployLinks?.siteUrl ? (
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Live URL</p>
+                      <a
+                        href={deployLinks.siteUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3 text-left shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Open live site</p>
+                          <p className="mt-1 break-all text-sm font-semibold text-zinc-900">{deployLinks.siteUrl}</p>
+                        </div>
+                        <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
+                      </a>
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-[40px] flex-1 rounded-xl border-zinc-300 text-zinc-700"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(deployLinks.siteUrl || "")
+                              toast({ title: "Copied", description: "Live URL copied to clipboard." })
+                            } catch {
+                              toast({ title: "Copy failed", description: "Could not copy live URL.", variant: "destructive" })
+                            }
+                          }}
+                        >
+                          Copy Link
+                        </Button>
+                        <Button
+                          type="button"
+                          className="min-h-[40px] flex-1 rounded-xl bg-zinc-900 text-white hover:bg-black"
+                          onClick={async () => {
+                            try {
+                              if (navigator.share) {
+                                await navigator.share({ title: displayProjectName, url: deployLinks.siteUrl || "" })
+                              } else {
+                                await navigator.clipboard.writeText(deployLinks.siteUrl || "")
+                                toast({ title: "Copied", description: "Share is unavailable here, so the URL was copied instead." })
+                              }
+                            } catch {
+                              // Ignore user-cancelled share events
+                            }
+                          }}
+                        >
+                          Share Link
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-zinc-500">Not published yet.</p>
+                  )}
+                  <Button
+                    type="button"
+                    className="min-h-[44px] w-full rounded-xl bg-[#1f1f1f] text-white hover:bg-black"
+                    onClick={handleDeployToNetlify}
+                    disabled={isDeploying}
+                  >
+                    {isDeploying ? "Publishing..." : deployLinks?.siteUrl ? "Republish with Netlify" : "Publish with Netlify"}
+                  </Button>
+                  {(isDeploying || deployLogs.length > 0 || deployStep) && (
+                    <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#111111] shadow-inner">
+                      <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-[#171717] px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">Build Log</p>
+                        </div>
+                        {deployStep ? <p className="text-[11px] font-mono text-zinc-500">[{deployStep}]</p> : null}
+                      </div>
+                      <div className="max-h-48 overflow-auto bg-[#111111] p-3 font-mono text-[11px] leading-6 text-zinc-300">
+                        {deployLogs.length === 0 ? (
+                          <p className="text-zinc-500">$ Starting publish...</p>
+                        ) : (
+                          deployLogs.slice(-120).map((line, i) => (
+                            <p
+                              key={`netlify-log-${i}`}
+                              className={cn(
+                                "whitespace-pre-wrap break-words",
+                                /\berror\b|failed|ERR!/i.test(line) && "text-red-300",
+                                /\bwarn\b|warning|EBADENGINE/i.test(line) && "text-amber-300",
+                                /added \d+ packages|success|complete|published|ready/i.test(line) && "text-emerald-300",
+                                /^\s*>/.test(line) && "text-sky-300",
+                                !/\berror\b|failed|ERR!|warn|warning|EBADENGINE|added \d+ packages|success|complete|published|ready|^\s*>/i.test(line) && "text-zinc-300"
+                              )}
+                            >
+                              <span className="mr-2 text-zinc-600">$</span>
+                              {line}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-[1.5rem] border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-100 bg-zinc-50/80 px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Vercel</p>
+                      <p className="mt-1 text-sm text-zinc-600">Great for fast frontend hosting with an equally clean publish path.</p>
+                    </div>
+                    <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+                      Alternative
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-4 px-4 py-4">
+                  {vercelDeployLinks?.siteUrl ? (
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Live URL</p>
+                      <a
+                        href={vercelDeployLinks.siteUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3 text-left shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Open live site</p>
+                          <p className="mt-1 break-all text-sm font-semibold text-zinc-900">{vercelDeployLinks.siteUrl}</p>
+                        </div>
+                        <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
+                      </a>
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-[40px] flex-1 rounded-xl border-zinc-300 text-zinc-700"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(vercelDeployLinks.siteUrl || "")
+                              toast({ title: "Copied", description: "Live URL copied to clipboard." })
+                            } catch {
+                              toast({ title: "Copy failed", description: "Could not copy live URL.", variant: "destructive" })
+                            }
+                          }}
+                        >
+                          Copy Link
+                        </Button>
+                        <Button
+                          type="button"
+                          className="min-h-[40px] flex-1 rounded-xl bg-zinc-900 text-white hover:bg-black"
+                          onClick={async () => {
+                            try {
+                              if (navigator.share) {
+                                await navigator.share({ title: displayProjectName, url: vercelDeployLinks.siteUrl || "" })
+                              } else {
+                                await navigator.clipboard.writeText(vercelDeployLinks.siteUrl || "")
+                                toast({ title: "Copied", description: "Share is unavailable here, so the URL was copied instead." })
+                              }
+                            } catch {
+                              // Ignore user-cancelled share events
+                            }
+                          }}
+                        >
+                          Share Link
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-zinc-500">Not published yet.</p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-[44px] w-full rounded-xl border-zinc-300 text-zinc-700"
+                    onClick={handleDeployToVercel}
+                    disabled={isVercelDeploying}
+                  >
+                    {isVercelDeploying ? "Publishing..." : vercelDeployLinks?.siteUrl ? "Republish with Vercel" : "Publish with Vercel"}
+                  </Button>
+                  {(isVercelDeploying || vercelDeployLogs.length > 0 || vercelDeployStep) && (
+                    <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#111111] shadow-inner">
+                      <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-[#171717] px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">Build Log</p>
+                        </div>
+                        {vercelDeployStep ? <p className="text-[11px] font-mono text-zinc-500">[{vercelDeployStep}]</p> : null}
+                      </div>
+                      <div className="max-h-48 overflow-auto bg-[#111111] p-3 font-mono text-[11px] leading-6 text-zinc-300">
+                        {vercelDeployLogs.length === 0 ? (
+                          <p className="text-zinc-500">$ Starting publish...</p>
+                        ) : (
+                          vercelDeployLogs.slice(-120).map((line, i) => (
+                            <p
+                              key={`vercel-log-${i}`}
+                              className={cn(
+                                "whitespace-pre-wrap break-words",
+                                /\berror\b|failed|ERR!/i.test(line) && "text-red-300",
+                                /\bwarn\b|warning|EBADENGINE/i.test(line) && "text-amber-300",
+                                /added \d+ packages|success|complete|published|ready/i.test(line) && "text-emerald-300",
+                                /^\s*>/.test(line) && "text-sky-300",
+                                !/\berror\b|failed|ERR!|warn|warning|EBADENGINE|added \d+ packages|success|complete|published|ready|^\s*>/i.test(line) && "text-zinc-300"
+                              )}
+                            >
+                              <span className="mr-2 text-zinc-600">$</span>
+                              {line}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {(deployError || vercelDeployError) && (
-              <p className="text-xs text-red-600">{deployError || vercelDeployError}</p>
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {deployError || vercelDeployError}
+              </div>
             )}
           </div>
         </DialogContent>

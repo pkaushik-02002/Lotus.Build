@@ -31,6 +31,22 @@ async function writeFilesToSandbox(sandbox: Sandbox, files: any[]) {
   }
 }
 
+function normalizeSourceImports(files: any[]) {
+  return files.map((file) => {
+    if (!file?.path || typeof file.content !== "string") return file
+    if (!/\.(tsx?|jsx?)$/.test(file.path)) return file
+
+    const normalizedContent = file.content.replace(
+      /((?:from\s+|import\s+)\s*["'][^"']+)\.(tsx?|jsx?)(["'])/g,
+      "$1$3"
+    )
+
+    return normalizedContent === file.content
+      ? file
+      : { ...file, content: normalizedContent }
+  })
+}
+
 async function normalizePostcssConfigForBuild(sandbox: Sandbox) {
   const postcssPath = "/home/user/project/postcss.config.js"
   const packageJsonPath = "/home/user/project/package.json"
@@ -180,6 +196,8 @@ export async function POST(req: Request) {
           controller.close()
           return
         }
+
+        project.files = normalizeSourceImports(project.files)
 
         // Ensure netlify.toml exists for clarity/portability (even though we're deploying dist output directly)
         const hasNetlifyToml = project.files.some((f: any) => f?.path === "netlify.toml")

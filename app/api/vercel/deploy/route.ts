@@ -28,6 +28,22 @@ async function getProjectWithVercel(projectId: string) {
   return { data, files, token, name }
 }
 
+function normalizeSourceImports(files: any[]) {
+  return files.map((file: any) => {
+    if (!file?.path || typeof file.content !== "string") return file
+    if (!/\.(tsx?|jsx?)$/.test(file.path)) return file
+
+    const normalizedContent = file.content.replace(
+      /((?:from\s+|import\s+)\s*["'][^"']+)\.(tsx?|jsx?)(["'])/g,
+      "$1$3"
+    )
+
+    return normalizedContent === file.content
+      ? file
+      : { ...file, content: normalizedContent }
+  })
+}
+
 export async function POST(req: Request) {
   let projectId = ""
 
@@ -80,7 +96,9 @@ export async function POST(req: Request) {
         send({ type: "step", step: "starting", status: "running", message: "Starting deployment..." })
         send({ type: "log", message: "Uploading files..." })
 
-        const files = project.files.map((f: any) => ({
+        const normalizedFiles = normalizeSourceImports(project.files)
+
+        const files = normalizedFiles.map((f: any) => ({
           file: f.path,
           data: typeof f.content === "string" ? f.content : "",
         }))

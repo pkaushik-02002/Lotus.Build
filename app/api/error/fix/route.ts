@@ -1,5 +1,4 @@
 import OpenAI from "openai"
-import { applyPatch } from "diff"
 import { NextResponse } from "next/server"
 import { adminDb } from "@/lib/firebase-admin"
 import { assertProjectCanEdit } from "@/lib/project-access"
@@ -10,152 +9,228 @@ export const runtime = "nodejs"
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 type ProjectFile = { path: string; content: string }
-type FixPatch = { file: string; diff: string }
-type FixPayload = { patches?: FixPatch[]; explanation?: string }
 
-function extractJson(raw: string): string {
-  const trimmed = raw.trim()
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
-  if (fenced?.[1]) return fenced[1].trim()
-  const first = trimmed.indexOf("{")
-  const last = trimmed.lastIndexOf("}")
-  if (first >= 0 && last > first) return trimmed.slice(first, last + 1)
-  return trimmed
+type FixAttemptResult = {
+  explanation: string
+  files: ProjectFile[]
+  issues: string[]
+}
+
+function extractAgentMessage(content: string): { agentMessage: string | null; contentWithoutAgent: string } {
+  const match = content.match(/===AGENT_MESSAGE===\s*([\s\S]*?)\s*===END_AGENT_MESSAGE===/)
+  if (!match) return { agentMessage: null, contentWithoutAgent: content }
+  return {
+    agentMessage: match[1].trim(),
+    contentWithoutAgent: content.replace(match[0], "").trim(),
+  }
 }
 
 function parseFileMentions(input: string): string[] {
   if (!input) return []
-  const matches = input.match(/[A-Za-z0-9_./\\-]+\.(tsx?|jsx?|css|scss|json|mjs|cjs|js)/g) || []
-  return [...new Set(matches.map((m) => m.replace(/\\/g, "/")))]
+  const matches = input.match(/[A-Za-z0-9_./\\-]+\.(tsx?|jsx?|css|scss|json|mjs|cjs|js|svg|png|jpg|jpeg|webp|gif|ico)/g) || []
+  return [...new Set(matches.map((match) => match.replace(/\\/g, "/")))]
 }
 
 function pickContextFiles(files: ProjectFile[], errorText: string, expanded: boolean): ProjectFile[] {
-  const byPath = new Map(files.map((f) => [f.path, f]))
+  const byPath = new Map(files.map((file) => [file.path, file]))
   const picked = new Set<string>()
-  const mentions = parseFileMentions(errorText)
 
-  for (const m of mentions) {
-    if (byPath.has(m)) picked.add(m)
+  for (const mentionedPath of parseFileMentions(errorText)) {
+    if (byPath.has(mentionedPath)) picked.add(mentionedPath)
   }
 
-  const important = [
+  for (const important of [
     "package.json",
     "tsconfig.json",
     "vite.config.ts",
     "vite.config.js",
-    "next.config.js",
-    "next.config.ts",
     "src/main.tsx",
     "src/App.tsx",
     "src/index.css",
-  ]
-  for (const p of important) {
-    if (byPath.has(p)) picked.add(p)
+  ]) {
+    if (byPath.has(important)) picked.add(important)
   }
 
-  const limit = expanded ? 20 : 10
-  for (const f of files) {
+  const limit = expanded ? 24 : 12
+  for (const file of files) {
     if (picked.size >= limit) break
-    if (/\.(tsx?|jsx?|css|scss|json)$/.test(f.path)) picked.add(f.path)
+    if (/\.(tsx?|jsx?|css|scss|json|svg)$/.test(file.path)) picked.add(file.path)
   }
 
   return [...picked]
-    .map((p) => byPath.get(p))
-    .filter((f): f is ProjectFile => !!f)
+    .map((path) => byPath.get(path))
+    .filter((file): file is ProjectFile => Boolean(file))
 }
 
-function normalizeDiff(file: string, diffText: string): string {
-  const text = String(diffText || "").trim()
-  if (!text) return text
-  if (text.includes("--- ") && text.includes("+++ ")) return text
-  return `--- a/${file}\n+++ b/${file}\n${text}`
+function parseStreamingFiles(content: string): ProjectFile[] {
+  const files: ProjectFile[] = []
+  const fileRegex = /===FILE:\s*(.+?)===\n([\s\S]*?)===END_FILE===/g
+  let match: RegExpExecArray | null
+
+  while ((match = fileRegex.exec(content)) !== null) {
+    const path = match[1].trim()
+    const fileContent = match[2]
+      .replace(/^```[a-zA-Z0-9_-]*\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim()
+
+    if (path) files.push({ path, content: fileContent })
+  }
+
+  return files
 }
 
-function applyPatches(files: ProjectFile[], patches: FixPatch[]) {
-  const next = files.map((f) => ({ ...f }))
-  const indexByPath = new Map(next.map((f, i) => [f.path, i]))
+function mergeFiles(originalFiles: ProjectFile[], updatedFiles: ProjectFile[]): ProjectFile[] {
+  const merged = originalFiles.map((file) => ({ ...file }))
+  const indexByPath = new Map(merged.map((file, index) => [file.path, index]))
 
-  for (const patch of patches) {
-    const file = patch.file?.trim()
-    if (!file) continue
-    const idx = indexByPath.get(file)
-    const current = idx == null ? "" : next[idx].content
-    const normalized = normalizeDiff(file, patch.diff)
-    const patched = applyPatch(current, normalized)
-    if (patched === false) {
-      throw new Error(`Patch failed for ${file}`)
-    }
-    if (idx == null) {
-      next.push({ path: file, content: patched })
-      indexByPath.set(file, next.length - 1)
+  for (const file of updatedFiles) {
+    const existingIndex = indexByPath.get(file.path)
+    if (existingIndex == null) {
+      merged.push({ ...file })
+      indexByPath.set(file.path, merged.length - 1)
     } else {
-      next[idx] = { ...next[idx], content: patched }
+      merged[existingIndex] = { ...file }
     }
   }
 
-  return next
+  return merged
 }
 
-async function runAiFix(params: {
-  errorMessage: string
-  failureCategory?: string | null
-  failureReason?: string | null
-  logsTail?: string | null
-  files: ProjectFile[]
-  expanded: boolean
-  previousAttemptError?: string | null
-}) {
-  const {
-    errorMessage,
-    failureCategory,
-    failureReason,
-    logsTail,
-    files,
-    expanded,
-    previousAttemptError,
-  } = params
+function validateFiles(files: ProjectFile[]) {
+  const issues = new Set<string>()
+  const availablePaths = new Set(files.map((file) => file.path))
 
-  const context = pickContextFiles(files, `${errorMessage}\n${logsTail || ""}`, expanded)
-  const fileContext = context
-    .map((f) => `--- FILE: ${f.path} ---\n${f.content.slice(0, 12000)}\n--- END FILE ---`)
+  for (const file of files) {
+    if (!/\.(tsx?|jsx?|js)$/.test(file.path)) continue
+
+    const importerDir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : ""
+    const importRegex = /from\s+["'](\.[^"']+)["']|import\s+["'](\.[^"']+)["']/g
+    let importMatch: RegExpExecArray | null
+
+    while ((importMatch = importRegex.exec(file.content)) !== null) {
+      const rawImport = importMatch[1] || importMatch[2]
+      if (!rawImport) continue
+
+      const normalizedBase = rawImport
+        .split("/")
+        .reduce<string[]>((parts, segment) => {
+          if (!segment || segment === ".") return parts
+          if (segment === "..") {
+            parts.pop()
+            return parts
+          }
+          parts.push(segment)
+          return parts
+        }, importerDir ? importerDir.split("/") : [])
+        .join("/")
+
+      const candidatePaths = [
+        normalizedBase,
+        `${normalizedBase}.ts`,
+        `${normalizedBase}.tsx`,
+        `${normalizedBase}.js`,
+        `${normalizedBase}.jsx`,
+        `${normalizedBase}.css`,
+        `${normalizedBase}/index.ts`,
+        `${normalizedBase}/index.tsx`,
+        `${normalizedBase}/index.js`,
+      ]
+
+      if (!candidatePaths.some((candidate) => availablePaths.has(candidate))) {
+        issues.add(`Missing import target "${rawImport}" referenced from ${file.path}`)
+      }
+    }
+
+    const assetMatches = file.content.match(/["'](?:\/|\.\/)[^"']+\.(svg|png|jpg|jpeg|webp|gif|ico)["']/g) || []
+    for (const assetLiteral of assetMatches) {
+      const assetPath = assetLiteral.slice(1, -1)
+      const normalizedAssetPath = assetPath.startsWith("/")
+        ? `public${assetPath}`
+        : `${importerDir}/${assetPath.replace(/^\.\//, "")}`
+      if (!availablePaths.has(assetPath) && !availablePaths.has(normalizedAssetPath)) {
+        issues.add(`Missing asset "${assetPath}" referenced from ${file.path}`)
+      }
+    }
+  }
+
+  return [...issues]
+}
+
+async function runFixAttempt(params: {
+  projectFiles: ProjectFile[]
+  errorMessage: string
+  logsTail?: string
+  failureCategory?: string
+  failureReason?: string
+  previousAttemptFeedback?: string | null
+  expanded: boolean
+}): Promise<FixAttemptResult> {
+  const contextFiles = pickContextFiles(
+    params.projectFiles,
+    `${params.errorMessage}\n${params.logsTail || ""}\n${params.previousAttemptFeedback || ""}`,
+    params.expanded
+  )
+
+  const fileContext = contextFiles
+    .map((file) => `--- FILE: ${file.path} ---\n${file.content.slice(0, 18000)}\n--- END FILE ---`)
     .join("\n\n")
 
   const prompt = [
-    "You are fixing a failing website project build/preview.",
-    "Return ONLY valid JSON with this shape:",
-    '{"patches":[{"file":"relative/path","diff":"@@ ..."}],"explanation":"..."}',
+    "You are a build-repair agent fixing a failing React/Vite website project.",
+    "Your job is to make the project build successfully with the smallest reliable set of file changes.",
+    "Return output in this exact format only:",
+    "===AGENT_MESSAGE=== short explanation ===END_AGENT_MESSAGE===",
+    "===FILE: relative/path=== full corrected file content ===END_FILE===",
     "Rules:",
-    "- Minimal targeted diffs only.",
-    "- Do not rewrite entire files unless required.",
-    "- If package missing, include package.json patch.",
+    "- Output only files you changed or created.",
+    "- Prefer full corrected file contents over diffs.",
+    "- Every import must resolve.",
+    "- Every referenced component must exist.",
+    "- Do not reference icons or assets unless they already exist or you create them now.",
+    "- Do not return JSON.",
     "",
-    `Error: ${errorMessage}`,
-    failureCategory ? `Category: ${failureCategory}` : "",
-    failureReason ? `Reason: ${failureReason}` : "",
-    logsTail ? `Logs:\n${logsTail.slice(-12000)}` : "",
-    previousAttemptError ? `Previous failed attempt context: ${previousAttemptError}` : "",
+    `Error: ${params.errorMessage}`,
+    params.failureCategory ? `Failure category: ${params.failureCategory}` : "",
+    params.failureReason ? `Failure reason: ${params.failureReason}` : "",
+    params.logsTail ? `Logs:\n${params.logsTail.slice(-16000)}` : "",
+    params.previousAttemptFeedback ? `Previous attempt feedback:\n${params.previousAttemptFeedback}` : "",
     "",
-    "Project context files:",
+    "Project context:",
     fileContext,
   ]
     .filter(Boolean)
     .join("\n")
 
-  const resp = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4.1",
     temperature: 0.1,
     messages: [
-      { role: "system", content: "You generate precise code repair patches in JSON only." },
+      {
+        role: "system",
+        content:
+          "You are an expert code repair agent. Fix build errors reliably and return only the required AGENT_MESSAGE plus FILE blocks.",
+      },
       { role: "user", content: prompt },
     ],
+    max_tokens: 9000,
   })
 
-  const content = resp.choices?.[0]?.message?.content || ""
-  const parsed = JSON.parse(extractJson(content)) as FixPayload
-  const patches = Array.isArray(parsed.patches) ? parsed.patches : []
-  if (!patches.length) throw new Error("AI returned no patches")
-  return { patches, explanation: parsed.explanation || "Applied minimal patch." }
+  const raw = completion.choices[0]?.message?.content || ""
+  const { agentMessage, contentWithoutAgent } = extractAgentMessage(raw)
+  const updatedFiles = parseStreamingFiles(contentWithoutAgent)
+  if (!updatedFiles.length) {
+    throw new Error("Repair agent returned no file updates.")
+  }
+
+  const mergedFiles = mergeFiles(params.projectFiles, updatedFiles)
+  const issues = validateFiles(mergedFiles)
+
+  return {
+    explanation: agentMessage || "Applied a build repair.",
+    files: mergedFiles,
+    issues,
+  }
 }
 
 export async function POST(req: Request) {
@@ -163,6 +238,7 @@ export async function POST(req: Request) {
     const uid = await requireUserUid(req)
     const body = (await req.json().catch(() => ({}))) as {
       projectId?: string
+      files?: ProjectFile[]
       error?: string
       logsTail?: string
       failureCategory?: string
@@ -170,12 +246,18 @@ export async function POST(req: Request) {
     }
 
     const projectId = String(body.projectId || "")
-    if (!projectId) return NextResponse.json({ error: "Missing projectId" }, { status: 400 })
     if (!body.error) return NextResponse.json({ error: "Missing error context" }, { status: 400 })
 
-    const { snap } = await assertProjectCanEdit(projectId, uid)
-    const data = snap.data() as { files?: ProjectFile[] }
-    const originalFiles = Array.isArray(data?.files) ? data.files : []
+    let originalFiles: ProjectFile[] = []
+    if (Array.isArray(body.files) && body.files.length > 0) {
+      originalFiles = body.files
+    } else {
+      if (!projectId) return NextResponse.json({ error: "Missing projectId" }, { status: 400 })
+      const { snap } = await assertProjectCanEdit(projectId, uid)
+      const projectData = snap.data() as { files?: ProjectFile[] }
+      originalFiles = Array.isArray(projectData?.files) ? projectData.files : []
+    }
+
     if (!originalFiles.length) {
       return NextResponse.json({ error: "Project has no files to repair" }, { status: 400 })
     }
@@ -183,79 +265,85 @@ export async function POST(req: Request) {
     const authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || ""
     const origin = new URL(req.url).origin
 
-    let attemptError: string | null = null
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const expanded = attempt === 2
-      const currentSnap = await adminDb.collection("projects").doc(projectId).get()
-      const currentFiles = (currentSnap.data()?.files as ProjectFile[]) || originalFiles
-      const backup = currentFiles.map((f) => ({ ...f }))
+    let latestFiles = originalFiles
+    let previousAttemptFeedback: string | null = null
 
-      try {
-        const ai = await runAiFix({
-          errorMessage: String(body.error),
-          failureCategory: body.failureCategory || null,
-          failureReason: body.failureReason || null,
-          logsTail: body.logsTail || "",
-          files: currentFiles,
-          expanded,
-          previousAttemptError: attemptError,
-        })
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const result = await runFixAttempt({
+        projectFiles: latestFiles,
+        errorMessage: String(body.error),
+        logsTail: body.logsTail || "",
+        failureCategory: body.failureCategory,
+        failureReason: body.failureReason,
+        previousAttemptFeedback,
+        expanded: attempt > 1,
+      })
 
-        const patchedFiles = applyPatches(currentFiles, ai.patches)
+      if (result.issues.length > 0) {
+        previousAttemptFeedback = `Validation issues after attempt ${attempt}:\n${result.issues.map((issue) => `- ${issue}`).join("\n")}`
+        latestFiles = result.files
+        continue
+      }
 
+      if (projectId) {
         await adminDb.collection("projects").doc(projectId).set(
           {
-            files: patchedFiles,
+            files: result.files,
             lastAutoFix: {
               appliedAt: new Date(),
               attempt,
-              explanation: ai.explanation,
+              explanation: result.explanation,
               sourceError: String(body.error),
             },
           },
           { merge: true }
         )
+      }
 
-        const verifyRes = await fetch(`${origin}/api/projects/${encodeURIComponent(projectId)}/ensure-preview`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(authHeader ? { Authorization: authHeader } : {}),
-          },
-          body: JSON.stringify({ force: true }),
-        })
-        const verifyJson = await verifyRes.json().catch(() => ({}))
-        if (!verifyRes.ok || !verifyJson?.previewUrl) {
-          throw new Error(String(verifyJson?.error || `Preview validation failed (${verifyRes.status})`))
-        }
-
+      if (!projectId) {
         return NextResponse.json({
           success: true,
           attempt,
-          explanation: ai.explanation,
-          patches: ai.patches,
-          previewUrl: verifyJson.previewUrl,
-          files: patchedFiles,
+          explanation: result.explanation,
+          files: result.files,
         })
-      } catch (err: any) {
-        attemptError = err?.message || "Unknown auto-fix error"
-        await adminDb.collection("projects").doc(projectId).set({ files: backup }, { merge: true })
-        console.error("[error-fix] attempt failed", { projectId, attempt, attemptError })
       }
+
+      const verifyRes = await fetch(`${origin}/api/projects/${encodeURIComponent(projectId)}/ensure-preview`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({ force: true }),
+      })
+      const verifyJson = await verifyRes.json().catch(() => ({}))
+
+      if (verifyRes.ok && verifyJson?.previewUrl) {
+        return NextResponse.json({
+          success: true,
+          attempt,
+          explanation: result.explanation,
+          previewUrl: verifyJson.previewUrl,
+          files: result.files,
+        })
+      }
+
+      previousAttemptFeedback = `Preview verification failed after attempt ${attempt}: ${String(
+        verifyJson?.error || `status ${verifyRes.status}`
+      )}`
+      latestFiles = result.files
     }
 
     return NextResponse.json(
       {
         success: false,
-        error: "Automatic fix could not resolve the issue after two attempts.",
-        recommendation:
-          "Try a narrower change request, then run Fix with AI again. You can also check build logs for the first failing file.",
+        error: "Automatic fix could not produce a buildable result after three attempts.",
+        recommendation: "Try Fix Error again after narrowing the request or inspect the first failing file in the build logs.",
       },
       { status: 422 }
     )
-  } catch (err: any) {
-    const message = err?.message || "Failed to run automatic fix"
-    return NextResponse.json({ error: message }, { status: 500 })
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message || "Failed to run automatic fix" }, { status: 500 })
   }
 }
-

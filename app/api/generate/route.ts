@@ -4,6 +4,117 @@ import { Timestamp } from "firebase-admin/firestore"
 import { DEFAULT_PLANS } from "@/lib/firebase"
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const nvidia = new OpenAI({
+  apiKey: process.env.NVIDIA_API_KEY || process.env.NGC_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
+})
+
+const DEFAULT_MODEL = "GPT-4-1 Mini"
+const OPENAI_MODEL_MAP: Record<string, string> = {
+  "o3-mini": "o3-mini",
+  "GPT-4-1 Mini": "gpt-4.1-mini",
+  "GPT-4-1": "gpt-4.1",
+}
+
+const CURATED_NVIDIA_MODELS = [
+  "minimaxai/minimax-m2.1",
+  "meta/llama-3.3-70b-instruct",
+  "meta/llama-3.1-405b-instruct",
+  "deepseek-ai/deepseek-r1",
+  "qwen/qwen2.5-coder-32b-instruct",
+  "mistralai/mistral-small-3.1-24b-instruct",
+  "google/gemma-3-27b-it",
+]
+
+const OPEN_SOURCE_MODEL_PATTERNS = [
+  "meta/",
+  "mistralai/",
+  "deepseek-ai/",
+  "qwen/",
+  "google/gemma",
+  "minimaxai/",
+  "moonshotai/",
+  "nvidia/",
+]
+
+let cachedNvidiaModels: { models: string[]; expiresAt: number } | null = null
+
+type ParsedFileBlock = {
+  path: string
+  content: string
+}
+
+function isOpenSourceNvidiaModel(modelId: string): boolean {
+  const normalized = modelId.toLowerCase()
+  return OPEN_SOURCE_MODEL_PATTERNS.some((pattern) => normalized.includes(pattern))
+}
+
+async function getNvidiaModels(): Promise<string[]> {
+  const now = Date.now()
+  if (cachedNvidiaModels && cachedNvidiaModels.expiresAt > now) {
+    return cachedNvidiaModels.models
+  }
+
+  const fallbackModels = [...CURATED_NVIDIA_MODELS].sort((a, b) => a.localeCompare(b))
+  const apiKey = process.env.NVIDIA_API_KEY || process.env.NGC_API_KEY
+  if (!apiKey) {
+    cachedNvidiaModels = { models: fallbackModels, expiresAt: now + 5 * 60 * 1000 }
+    return fallbackModels
+  }
+
+  try {
+    const response = await fetch("https://integrate.api.nvidia.com/v1/models", {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      cache: "no-store",
+    })
+
+    if (!response.ok) {
+      throw new Error(`NVIDIA models request failed with ${response.status}`)
+    }
+
+    const data = await response.json() as { data?: Array<{ id?: string }> }
+    const discoveredModels = (data.data || [])
+      .map((entry) => entry.id?.trim())
+      .filter((id): id is string => Boolean(id && isOpenSourceNvidiaModel(id)))
+
+    const mergedModels = Array.from(new Set([...CURATED_NVIDIA_MODELS, ...discoveredModels]))
+      .sort((a, b) => a.localeCompare(b))
+
+    cachedNvidiaModels = { models: mergedModels, expiresAt: now + 10 * 60 * 1000 }
+    return mergedModels
+  } catch (error) {
+    console.error("Failed to load NVIDIA models:", error)
+    cachedNvidiaModels = { models: fallbackModels, expiresAt: now + 5 * 60 * 1000 }
+    return fallbackModels
+  }
+}
+
+async function resolveModel(model: string) {
+  if (OPENAI_MODEL_MAP[model]) {
+    return {
+      client: openai,
+      selectedModel: OPENAI_MODEL_MAP[model],
+      provider: "openai" as const,
+    }
+  }
+
+  const nvidiaModels = await getNvidiaModels()
+  if (nvidiaModels.includes(model)) {
+    return {
+      client: nvidia,
+      selectedModel: model,
+      provider: "nvidia" as const,
+    }
+  }
+
+  return {
+    client: openai,
+    selectedModel: OPENAI_MODEL_MAP[DEFAULT_MODEL],
+    provider: "openai" as const,
+  }
+}
 
 function getFirstDayOfNextMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth() + 1, 1)
@@ -18,6 +129,190 @@ function getPeriodEndDate(raw: unknown): Date | null {
   return isNaN(d.getTime()) ? null : d
 }
 
+function parseFileBlocks(content: string): ParsedFileBlock[] {
+  const files: ParsedFileBlock[] = []
+  const fileRegex = /===FILE:\s*(.+?)===\n([\s\S]*?)===END_FILE===/g
+  let match: RegExpExecArray | null
+
+  while ((match = fileRegex.exec(content)) !== null) {
+    const path = match[1].trim()
+    const fileContent = match[2]
+      .replace(/^```[a-zA-Z0-9_-]*\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim()
+
+    if (path) {
+      files.push({ path, content: fileContent })
+    }
+  }
+
+  return files
+}
+
+function validateGeneratedFiles(generatedContent: string, existingFiles?: { path: string; content: string }[]) {
+  const fileBlocks = parseFileBlocks(generatedContent)
+  const availablePaths = new Set([
+    ...fileBlocks.map((file) => file.path),
+    ...(existingFiles || []).map((file) => file.path),
+    "src/main.tsx",
+    "src/index.css",
+    "src/App.tsx",
+    "vite.config.ts",
+    "package.json",
+    "index.html",
+  ])
+  const issues = new Set<string>()
+
+  for (const file of fileBlocks) {
+    const isCodeFile = /\.(tsx|ts|jsx|js)$/.test(file.path)
+    if (!isCodeFile) continue
+
+    const importRegex = /from\s+["'](\.[^"']+)["']|import\s+["'](\.[^"']+)["']/g
+    let match: RegExpExecArray | null
+    while ((match = importRegex.exec(file.content)) !== null) {
+      const rawImport = match[1] || match[2]
+      if (!rawImport) continue
+
+      const importerDir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : ""
+      const normalizedBase = rawImport
+        .replace(/^\.\//, importerDir ? `${importerDir}/` : "")
+        .replace(/\.\.\//g, "")
+      const candidatePaths = [
+        normalizedBase,
+        `${normalizedBase}.ts`,
+        `${normalizedBase}.tsx`,
+        `${normalizedBase}.js`,
+        `${normalizedBase}.jsx`,
+        `${normalizedBase}.css`,
+        `${normalizedBase}/index.ts`,
+        `${normalizedBase}/index.tsx`,
+      ]
+
+      const hasMatch = candidatePaths.some((candidate) => availablePaths.has(candidate))
+      if (!hasMatch) {
+        issues.add(`Missing import target "${rawImport}" referenced from ${file.path}`)
+      }
+    }
+
+    const missingAssetMatches = file.content.match(/["'](?:\/|\.\/)[^"']+\.(svg|png|jpg|jpeg|webp|gif|ico)["']/g) || []
+    for (const asset of missingAssetMatches) {
+      const assetPath = asset.slice(1, -1)
+      const normalizedAssetPath = assetPath.startsWith("/")
+        ? `public${assetPath}`
+        : `${file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 0))}/${assetPath.replace(/^\.\//, "")}`
+      if (!availablePaths.has(normalizedAssetPath) && !availablePaths.has(assetPath)) {
+        issues.add(`Missing asset "${assetPath}" referenced from ${file.path}`)
+      }
+    }
+  }
+
+  return {
+    fileBlocks,
+    issues: Array.from(issues),
+  }
+}
+
+async function generateWithNvidiaValidation(params: {
+  client: OpenAI
+  selectedModel: string
+  systemPrompt: string
+  userMessageContent: string
+  existingFiles?: { path: string; content: string }[]
+}) {
+  const initial = await params.client.chat.completions.create({
+    model: params.selectedModel,
+    messages: [
+      { role: "system", content: params.systemPrompt },
+      { role: "user", content: params.userMessageContent },
+    ],
+    max_tokens: 8000,
+  })
+
+  let finalContent = initial.choices[0]?.message?.content || ""
+  let usageInfo: any = initial.usage || null
+  let validation = validateGeneratedFiles(finalContent, params.existingFiles)
+
+  if (validation.issues.length > 0) {
+    const repairPrompt = `Your previous output had build-breaking issues. Repair the project and return the complete corrected response in the exact same streaming file format.
+
+Detected issues:
+${validation.issues.map((issue) => `- ${issue}`).join("\n")}
+
+Rules:
+- Keep the same app intent and design direction.
+- Fix all missing imports, missing components, and missing assets.
+- Do not explain the fixes.
+- Return exactly one AGENT_MESSAGE and the corrected file blocks only.
+- Do not wrap files in JSON or markdown.`
+
+    const repaired = await params.client.chat.completions.create({
+      model: params.selectedModel,
+      messages: [
+        { role: "system", content: `${params.systemPrompt}\n\nYou must repair invalid output when issues are reported.` },
+        { role: "user", content: params.userMessageContent },
+        { role: "assistant", content: finalContent },
+        { role: "user", content: repairPrompt },
+      ],
+      max_tokens: 8000,
+    })
+
+    finalContent = repaired.choices[0]?.message?.content || finalContent
+    usageInfo = repaired.usage || usageInfo
+    validation = validateGeneratedFiles(finalContent, params.existingFiles)
+  }
+
+  return {
+    finalContent,
+    usageInfo,
+    streamedLength: finalContent.length,
+    remainingIssues: validation.issues,
+  }
+}
+
+async function salvageWithOpenAI(params: {
+  systemPrompt: string
+  userMessageContent: string
+  brokenContent: string
+  issues: string[]
+}) {
+  const salvagePrompt = `Repair the broken project output below and return a fully corrected response in the exact required file streaming format.
+
+Detected issues:
+${params.issues.map((issue) => `- ${issue}`).join("\n")}
+
+Broken output:
+${params.brokenContent}
+
+Rules:
+- Keep the same product request and overall intent.
+- Return exactly one AGENT_MESSAGE and then only ===FILE=== blocks.
+- Ensure every import resolves and every referenced component exists.
+- Do not leave placeholders or missing files.`
+
+  const repaired = await openai.chat.completions.create({
+    model: OPENAI_MODEL_MAP[DEFAULT_MODEL],
+    messages: [
+      { role: "system", content: `${params.systemPrompt}\n\nYou are repairing an invalid project output into a buildable final result.` },
+      { role: "user", content: params.userMessageContent },
+      { role: "user", content: salvagePrompt },
+    ],
+    max_tokens: 8000,
+  })
+
+  return {
+    content: repaired.choices[0]?.message?.content || params.brokenContent,
+    usage: repaired.usage || null,
+  }
+}
+
+export async function GET() {
+  const nvidiaModels = await getNvidiaModels()
+  return Response.json({
+    defaultModel: DEFAULT_MODEL,
+    models: [...Object.keys(OPENAI_MODEL_MAP), ...nvidiaModels],
+  })
+}
+
 export async function POST(req: Request) {
   const body = await req.json() as {
     prompt: string
@@ -25,7 +320,7 @@ export async function POST(req: Request) {
     idToken?: string
     existingFiles?: { path: string; content: string }[]
   }
-  const { prompt, model = "gpt-4o", idToken, existingFiles } = body
+  const { prompt, model = DEFAULT_MODEL, idToken, existingFiles } = body
 
   // authenticate user via Firebase ID token (body) or Authorization Bearer token (header)
   const authHeader = req.headers.get("authorization") || req.headers.get("Authorization")
@@ -92,13 +387,7 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: 'Server error' }), { status: 500 })
   }
 
-  const modelMap: Record<string, string> = {
-    "o3-mini": "o3-mini",
-    "GPT-4-1 Mini": "gpt-4.1-mini",
-    "GPT-4-1": "gpt-4.1",
-  }
-
-  const selectedModel = modelMap[model] || "gpt-4o"
+  const { client, selectedModel, provider } = await resolveModel(model)
   const isFollowUp = Array.isArray(existingFiles) && existingFiles.length > 0
 
   const systemPromptFollowUp = `You are an expert React developer. The user is asking for CHANGES or ADDITIONS to an existing project. You will receive the current project files.
@@ -213,7 +502,26 @@ BACKEND DETECTION: If the user's request clearly implies a need for a backend, d
 ===META: suggestsBackend=true===
 Do NOT output this for purely static sites, landing pages, or UI-only apps with no data persistence. Only when the app would clearly benefit from a database or backend.`
 
+  const nvidiaReliabilityPrompt = `
+OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
+- Output a COMPLETE, internally consistent project update. Do not reference files, components, images, icons, fonts, or utilities that you do not also include or that do not already exist.
+- Before finishing, mentally verify that every import path you reference exists with the exact same filename and casing.
+- If App.tsx imports "./components/Footer", you MUST also output src/components/Footer.tsx unless it already exists in the provided files.
+- Do not invent asset paths like /icon.svg, /icon-light-32x32.png, ./assets/foo.png, or font files unless you also create them.
+- Prefer fewer files with complete implementations over many partially implemented files.
+- Avoid placeholder imports, TODO stubs, and references to components you did not define.
+- Keep the output buildable in Vite on the first run.
+- Perform a final self-check before finishing:
+  1. Every import resolves.
+  2. Every component used is defined.
+  3. Every asset referenced exists.
+  4. package.json includes every dependency used.
+  5. No file is omitted if another file depends on it.`
+
   const systemPrompt = isFollowUp ? systemPromptFollowUp : systemPromptNew
+  const finalSystemPrompt = provider === "nvidia"
+    ? `${systemPrompt}\n\n${nvidiaReliabilityPrompt}`
+    : systemPrompt
 
   // Build user message: for follow-up include current files so the model can edit them
   const userMessageContent = isFollowUp
@@ -221,39 +529,61 @@ Do NOT output this for purely static sites, landing pages, or UI-only apps with 
     : `Create a Vite + React + TypeScript application: ${prompt}`
 
   const encoder = new TextEncoder()
-
-  // stream generation and capture usage info if provider returns it in final chunk
-  const completion = await openai.chat.completions.create({
-    model: selectedModel,
-    stream: true,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessageContent },
-    ],
-    max_tokens: 8000,
-    // request provider to include usage in stream when available
-    stream_options: { include_usage: true } as any,
-  })
-
   let usageInfo: any = null
   let streamedLength = 0
 
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const chunk of completion) {
-          // capture provider-provided usage if present
-          if ((chunk as any).usage) {
-            usageInfo = (chunk as any).usage
+        if (provider === "nvidia") {
+          const validated = await generateWithNvidiaValidation({
+            client,
+            selectedModel,
+            systemPrompt: finalSystemPrompt,
+            userMessageContent,
+            existingFiles,
+          })
+          usageInfo = validated.usageInfo
+          streamedLength = validated.streamedLength
+          if (validated.remainingIssues.length > 0) {
+            console.warn("NVIDIA generation still has unresolved validation issues:", validated.remainingIssues)
+            const salvaged = await salvageWithOpenAI({
+              systemPrompt: finalSystemPrompt,
+              userMessageContent,
+              brokenContent: validated.finalContent,
+              issues: validated.remainingIssues,
+            })
+            usageInfo = salvaged.usage || usageInfo
+            streamedLength = salvaged.content.length
+            controller.enqueue(encoder.encode(salvaged.content))
+          } else {
+            controller.enqueue(encoder.encode(validated.finalContent))
           }
-          if ((chunk as any).choices && (chunk as any).choices[0]?.usage) {
-            usageInfo = (chunk as any).choices[0].usage
-          }
+        } else {
+          const completion = await client.chat.completions.create({
+            model: selectedModel,
+            stream: true,
+            messages: [
+              { role: "system", content: finalSystemPrompt },
+              { role: "user", content: userMessageContent },
+            ],
+            max_tokens: 8000,
+            stream_options: { include_usage: true } as any,
+          })
 
-          const content = chunk.choices[0]?.delta?.content
-          if (content) {
-            streamedLength += content.length
-            controller.enqueue(encoder.encode(content))
+          for await (const chunk of completion) {
+            if ((chunk as any).usage) {
+              usageInfo = (chunk as any).usage
+            }
+            if ((chunk as any).choices && (chunk as any).choices[0]?.usage) {
+              usageInfo = (chunk as any).choices[0].usage
+            }
+
+            const content = chunk.choices[0]?.delta?.content
+            if (content) {
+              streamedLength += content.length
+              controller.enqueue(encoder.encode(content))
+            }
           }
         }
 
