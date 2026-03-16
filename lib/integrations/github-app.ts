@@ -23,6 +23,11 @@ export type GitHubRepo = {
   default_branch?: string
 }
 
+export type GitHubAuthenticatedUser = {
+  login?: string
+  id?: number
+}
+
 function getRequiredEnv(name: string): string {
   const value = process.env[name]
   if (!value?.trim()) throw new Error(`${name} is not configured`)
@@ -102,6 +107,37 @@ export async function getUserInstallationRepos(userAccessToken: string, installa
     { token: userAccessToken }
   )
   if (!res.ok) throw new Error(res.json?.message || `Failed to load repositories (${res.status})`)
+  return Array.isArray(res.json?.repositories) ? res.json.repositories : []
+}
+
+export async function getAuthenticatedGitHubUser(userAccessToken: string): Promise<GitHubAuthenticatedUser> {
+  const res = await githubRequest<GitHubAuthenticatedUser & { message?: string }>("/user", {
+    token: userAccessToken,
+  })
+  if (!res.ok) throw new Error(res.json?.message || `Failed to load GitHub user (${res.status})`)
+  return res.json
+}
+
+export async function getAppInstallations(): Promise<GitHubInstallation[]> {
+  const jwt = createGitHubAppJwt()
+  const res = await githubRequest<GitHubInstallation[] | { message?: string }>("/app/installations", {
+    token: jwt,
+  })
+  if (!res.ok) {
+    const message = !Array.isArray(res.json) && typeof res.json?.message === "string"
+      ? res.json.message
+      : `Failed to load app installations (${res.status})`
+    throw new Error(message)
+  }
+  return Array.isArray(res.json) ? res.json : []
+}
+
+export async function getInstallationRepos(installationId: number): Promise<GitHubRepo[]> {
+  const installationToken = await getInstallationToken(installationId)
+  const res = await githubRequest<{ repositories?: GitHubRepo[]; message?: string }>("/installation/repositories", {
+    token: installationToken,
+  })
+  if (!res.ok) throw new Error(res.json?.message || `Failed to load installation repositories (${res.status})`)
   return Array.isArray(res.json?.repositories) ? res.json.repositories : []
 }
 
