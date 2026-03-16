@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { getGitHubToken, requireUserUid } from "@/lib/server-auth"
-import { getUserInstallationRepos, getUserInstallations } from "@/lib/integrations/github-app"
+import { getAllAppInstallationRepos, getUserInstallationRepos, getUserInstallations } from "@/lib/integrations/github-app"
 
 export const runtime = "nodejs"
 
@@ -25,6 +25,23 @@ export async function GET(req: Request) {
           id: Number(repo.id),
           fullName,
           installationId,
+          owner,
+          name,
+          private: !!repo.private,
+        })
+      }
+    }
+
+    if (dedup.size === 0) {
+      const fallbackRepos = await getAllAppInstallationRepos()
+      for (const repo of fallbackRepos) {
+        const fullName = String(repo.full_name || "")
+        if (!fullName || dedup.has(fullName)) continue
+        const [owner = "", name = ""] = fullName.split("/")
+        dedup.set(fullName, {
+          id: Number(repo.id),
+          fullName,
+          installationId: Number(repo.installationId),
           owner,
           name,
           private: !!repo.private,

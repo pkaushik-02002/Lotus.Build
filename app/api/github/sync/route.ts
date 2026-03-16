@@ -2,9 +2,8 @@ import { NextResponse } from "next/server"
 import { adminDb } from "@/lib/firebase-admin"
 import { getGitHubToken, requireUserUid } from "@/lib/server-auth"
 import {
+  getAllAppInstallationRepos,
   getAppInstallations,
-  getAuthenticatedGitHubUser,
-  getInstallationRepos,
   getInstallationToken,
   getUserInstallationRepos,
   getUserInstallations,
@@ -25,6 +24,77 @@ async function getProject(projectId: string) {
   }
   const files = Array.isArray(data?.files) ? data.files : null
   return { data, files }
+}
+
+function slugifyRepoName(value: string): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+  return slug || "builderstudio-site"
+}
+
+async function createRepositoryForInstallation(params: {
+  userToken: string
+  installationId: number
+  ownerLogin: string
+  ownerType?: string | null
+  baseName: string
+  description?: string
+}): Promise<{ repoFullName: string; installationId: number }> {
+  const ownerType = String(params.ownerType || "").toLowerCase()
+  const candidateNames = [
+    params.baseName,
+    `${params.baseName}-${Date.now().toString().slice(-6)}`,
+    `${params.baseName}-${Math.random().toString(36).slice(2, 8)}`,
+  ]
+
+  for (const name of candidateNames) {
+    if (!name) continue
+
+    if (ownerType === "organization") {
+      const installationToken = await getInstallationToken(params.installationId)
+      const res = await githubRequest(installationToken, "POST", `/orgs/${params.ownerLogin}/repos`, {
+        name,
+        description: params.description,
+        private: true,
+        auto_init: true,
+      })
+      if (res.ok) {
+        const json = await res.json()
+        return {
+          repoFullName: String(json?.full_name || `${params.ownerLogin}/${name}`),
+          installationId: params.installationId,
+        }
+      }
+      const errText = await res.text().catch(() => "")
+      if (res.status !== 422) {
+        throw new Error(`Failed to create GitHub repository: ${res.status} ${errText}`)
+      }
+      continue
+    }
+
+    const res = await githubRequest(params.userToken, "POST", "/user/repos", {
+      name,
+      description: params.description,
+      private: true,
+      auto_init: true,
+    })
+    if (res.ok) {
+      const json = await res.json()
+      return {
+        repoFullName: String(json?.full_name || `${params.ownerLogin}/${name}`),
+        installationId: params.installationId,
+      }
+    }
+    const errText = await res.text().catch(() => "")
+    if (res.status !== 422) {
+      throw new Error(`Failed to create GitHub repository: ${res.status} ${errText}`)
+    }
+  }
+
+  throw new Error("Could not create a unique GitHub repository name for this project.")
 }
 
 async function githubRequest(
@@ -72,77 +142,72 @@ export async function POST(req: Request) {
 
     const { data: projectData, files } = project
     const installations = await getUserInstallations(token)
+    const appInstallations = await getAppInstallations().catch(() => [])
     if (!installations.length) {
       try {
-        const viewer = await getAuthenticatedGitHubUser(token)
-        const appInstallations = await getAppInstallations()
-        const matchingInstallation = appInstallations.find(
-          (installation) => String(installation.account?.login || "") === String(viewer.login || "")
-        )
+        const fallbackRepos = await getAllAppInstallationRepos()
+        if (fallbackRepos.length) {
+          const preferredRepoFullName = String(projectData?.githubRepoFullName || "")
+          const selectedRepo =
+            (preferredRepoFullName
+              ? fallbackRepos.find((repo) => String(repo.full_name) === preferredRepoFullName)
+              : null) || fallbackRepos[0]
 
-        if (matchingInstallation?.id) {
-          const fallbackRepos = await getInstallationRepos(Number(matchingInstallation.id))
-          if (fallbackRepos.length) {
-            const repoFullName = String(projectData?.githubRepoFullName || fallbackRepos[0]?.full_name || "")
-            const selectedRepo =
-              fallbackRepos.find((repo) => String(repo.full_name) === repoFullName) || fallbackRepos[0]
-
-            if (selectedRepo?.full_name) {
-              const installationId = Number(matchingInstallation.id)
-              const [owner, repoName] = String(selectedRepo.full_name).split("/")
-              if (!owner || !repoName) {
-                return NextResponse.json({ error: "Invalid GitHub repository on project." }, { status: 400 })
-              }
-
-              const installationToken = await getInstallationToken(installationId)
-
-              for (const file of files) {
-                const path = file.path
-                const content = Buffer.from(file.content, "utf8").toString("base64")
-                const encodedPath = encodeURIComponent(path)
-
-                let sha: string | undefined
-                const getRes = await githubRequest(installationToken, "GET", `/repos/${owner}/${repoName}/contents/${encodedPath}`)
-                if (getRes.ok) {
-                  const getJson = await getRes.json()
-                  sha = getJson?.sha
-                }
-
-                const putRes = await githubRequest(installationToken, "PUT", `/repos/${owner}/${repoName}/contents/${encodedPath}`, {
-                  message: `Sync from BuildKit: ${path}`,
-                  content,
-                  ...(sha ? { sha } : {}),
-                })
-
-                if (!putRes.ok) {
-                  const errText = await putRes.text()
-                  return NextResponse.json(
-                    { error: `Failed to sync file ${path}: ${putRes.status} ${errText}` },
-                    { status: 500 }
-                  )
-                }
-              }
-
-              const repoUrl = `https://github.com/${selectedRepo.full_name}`
-              const syncedAt = new Date()
-
-              await adminDb.collection("projects").doc(projectId).set(
-                {
-                  githubRepoUrl: repoUrl,
-                  githubRepoFullName: selectedRepo.full_name,
-                  githubInstallationId: installationId,
-                  githubSyncedAt: syncedAt,
-                },
-                { merge: true }
-              )
-
-              return NextResponse.json({
-                repoUrl,
-                repoFullName: selectedRepo.full_name,
-                syncedAt: syncedAt.toISOString(),
-                filesCount: files.length,
-              })
+          if (selectedRepo?.full_name) {
+            const installationId = Number(selectedRepo.installationId)
+            const [owner, repoName] = String(selectedRepo.full_name).split("/")
+            if (!owner || !repoName) {
+              return NextResponse.json({ error: "Invalid GitHub repository on project." }, { status: 400 })
             }
+
+            const installationToken = await getInstallationToken(installationId)
+
+            for (const file of files) {
+              const path = file.path
+              const content = Buffer.from(file.content, "utf8").toString("base64")
+              const encodedPath = encodeURIComponent(path)
+
+              let sha: string | undefined
+              const getRes = await githubRequest(installationToken, "GET", `/repos/${owner}/${repoName}/contents/${encodedPath}`)
+              if (getRes.ok) {
+                const getJson = await getRes.json()
+                sha = getJson?.sha
+              }
+
+              const putRes = await githubRequest(installationToken, "PUT", `/repos/${owner}/${repoName}/contents/${encodedPath}`, {
+                message: `Sync from BuildKit: ${path}`,
+                content,
+                ...(sha ? { sha } : {}),
+              })
+
+              if (!putRes.ok) {
+                const errText = await putRes.text()
+                return NextResponse.json(
+                  { error: `Failed to sync file ${path}: ${putRes.status} ${errText}` },
+                  { status: 500 }
+                )
+              }
+            }
+
+            const repoUrl = `https://github.com/${selectedRepo.full_name}`
+            const syncedAt = new Date()
+
+            await adminDb.collection("projects").doc(projectId).set(
+              {
+                githubRepoUrl: repoUrl,
+                githubRepoFullName: selectedRepo.full_name,
+                githubInstallationId: installationId,
+                githubSyncedAt: syncedAt,
+              },
+              { merge: true }
+            )
+
+            return NextResponse.json({
+              repoUrl,
+              repoFullName: selectedRepo.full_name,
+              syncedAt: syncedAt.toISOString(),
+              filesCount: files.length,
+            })
           }
         }
       } catch {
@@ -185,23 +250,15 @@ export async function POST(req: Request) {
 
     if (!installationId || !repoFullName) {
       try {
-        const viewer = await getAuthenticatedGitHubUser(token)
-        const appInstallations = await getAppInstallations()
-        const matchingInstallation = appInstallations.find(
-          (installation) => String(installation.account?.login || "") === String(viewer.login || "")
-        )
+        const fallbackRepos = await getAllAppInstallationRepos()
+        const preferredRepo =
+          (preferredRepoFullName
+            ? fallbackRepos.find((repo) => String(repo.full_name) === preferredRepoFullName)
+            : null) || fallbackRepos[0]
 
-        if (matchingInstallation?.id) {
-          const fallbackRepos = await getInstallationRepos(Number(matchingInstallation.id))
-          const preferredRepo =
-            (preferredRepoFullName
-              ? fallbackRepos.find((repo) => String(repo.full_name) === preferredRepoFullName)
-              : null) || fallbackRepos[0]
-
-          if (preferredRepo?.full_name) {
-            installationId = Number(matchingInstallation.id)
-            repoFullName = String(preferredRepo.full_name)
-          }
+        if (preferredRepo?.full_name) {
+          installationId = Number(preferredRepo.installationId)
+          repoFullName = String(preferredRepo.full_name)
         }
       } catch {
         // Keep the user-facing error below if fallback resolution also fails.
@@ -209,13 +266,36 @@ export async function POST(req: Request) {
     }
 
     if (!installationId || !repoFullName) {
-      return NextResponse.json(
-        {
-          error:
-            "No accessible repository available for this GitHub App installation. Install app access to a repository first.",
-        },
-        { status: 400 }
-      )
+      const chosenInstallationId =
+        Number(projectData?.githubInstallationId || 0) ||
+        Number(installations[0]?.id || 0) ||
+        Number(appInstallations[0]?.id || 0)
+
+      const chosenInstallation = appInstallations.find((installation) => Number(installation.id) === chosenInstallationId) || appInstallations[0]
+      const ownerLogin = String(chosenInstallation?.account?.login || "")
+      const ownerType = String(chosenInstallation?.account?.type || "")
+
+      if (!chosenInstallationId || !ownerLogin) {
+        return NextResponse.json(
+          {
+            error:
+              "No accessible repository available for this GitHub App installation, and no install target was available to create a new repository.",
+          },
+          { status: 400 }
+        )
+      }
+
+      const created = await createRepositoryForInstallation({
+        userToken: token,
+        installationId: chosenInstallationId,
+        ownerLogin,
+        ownerType,
+        baseName: slugifyRepoName(String(projectData?.name || `builderstudio-${projectId}`)),
+        description: `Generated from BuilderStudio project ${projectId}`,
+      })
+
+      installationId = created.installationId
+      repoFullName = created.repoFullName
     }
 
     const [owner, repoName] = repoFullName.split("/")

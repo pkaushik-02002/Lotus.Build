@@ -141,3 +141,20 @@ export async function getInstallationRepos(installationId: number): Promise<GitH
   return Array.isArray(res.json?.repositories) ? res.json.repositories : []
 }
 
+export async function getAllAppInstallationRepos(): Promise<Array<GitHubRepo & { installationId: number }>> {
+  const installations = await getAppInstallations()
+  const repos: Array<GitHubRepo & { installationId: number }> = []
+
+  for (const installation of installations) {
+    const installationId = Number(installation.id)
+    if (!installationId) continue
+
+    const installationRepos = await getInstallationRepos(installationId)
+    for (const repo of installationRepos) {
+      repos.push({ ...repo, installationId })
+    }
+  }
+
+  return repos
+}
+
