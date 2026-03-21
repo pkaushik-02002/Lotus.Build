@@ -775,6 +775,13 @@ function ProjectContent() {
 
   const handleDeployToNetlify = useCallback(async () => {
     if (!projectId) return
+
+    if (!netlifyConnected) {
+      // Redirect to Netlify OAuth if not connected yet.
+      await handleConnectNetlify()
+      return
+    }
+
     setIsDeploying(true)
     setDeployError(null)
     setDeployLogs([])
@@ -860,7 +867,7 @@ function ProjectContent() {
       setIsDeploying(false)
       refreshNetlifyStatus()
     }
-  }, [deployLinks?.siteId, getAuthHeader, netlifySiteName, project?.name, projectId, refreshNetlifyStatus, toFriendlyDeployError])
+  }, [deployLinks?.siteId, getAuthHeader, netlifySiteName, project?.name, projectId, refreshNetlifyStatus, toFriendlyDeployError, netlifyConnected, handleConnectNetlify])
 
   const handleSaveVercelToken = useCallback(async () => {
     if (!projectId || !vercelTokenInput.trim()) return
@@ -883,6 +890,12 @@ function ProjectContent() {
 
   const handleDeployToVercel = useCallback(async () => {
     if (!projectId) return
+
+    if (!vercelConnected) {
+      setVercelDeployError("Vercel not connected. Please add your access token in Integrations before deploying.")
+      return
+    }
+
     setIsVercelDeploying(true)
     setVercelDeployError(null)
     setVercelDeployLogs([])
@@ -963,7 +976,7 @@ function ProjectContent() {
       setIsVercelDeploying(false)
       refreshVercelStatus()
     }
-  }, [getAuthHeader, projectId, refreshVercelStatus, toFriendlyDeployError])
+  }, [getAuthHeader, projectId, refreshVercelStatus, toFriendlyDeployError, vercelConnected])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -3199,10 +3212,16 @@ function ProjectContent() {
                   <Button
                     type="button"
                     className="min-h-[44px] w-full rounded-xl bg-[#1f1f1f] text-white hover:bg-black"
-                    onClick={handleDeployToNetlify}
-                    disabled={isDeploying}
+                    onClick={netlifyConnected ? handleDeployToNetlify : handleConnectNetlify}
+                    disabled={isDeploying || netlifyConnected === null}
                   >
-                    {isDeploying ? "Publishing..." : deployLinks?.siteUrl ? "Republish with Netlify" : "Publish with Netlify"}
+                    {isDeploying
+                      ? "Publishing..."
+                      : !netlifyConnected
+                      ? "Connect Netlify"
+                      : deployLinks?.siteUrl
+                      ? "Republish with Netlify"
+                      : "Publish with Netlify"}
                   </Button>
                   {(isDeploying || deployLogs.length > 0 || deployStep) && (
                     <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#111111] shadow-inner">
@@ -3306,14 +3325,47 @@ function ProjectContent() {
                   ) : (
                     <p className="text-sm text-zinc-500">Not published yet.</p>
                   )}
+                  {!vercelConnected && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                      <p className="font-semibold">Vercel access token needed</p>
+                      <p className="mt-1">To deploy with Vercel, add a token below.</p>
+                      <a
+                        href="https://vercel.com/account/tokens"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 block text-xs font-bold underline"
+                      >
+                        Create Vercel token in Vercel dashboard
+                      </a>
+                      <p className="mt-1 text-xs">Recommended scopes: <code>Deployments:Read</code>, <code>Deployments:Write</code>.</p>
+                      <Input
+                        value={vercelTokenInput}
+                        onChange={(e) => setVercelTokenInput(e.target.value)}
+                        placeholder="Enter Vercel access token"
+                        className="mt-2"
+                      />
+                      <Button
+                        type="button"
+                        className="mt-2 w-full bg-[#1f1f1f] text-white hover:bg-black"
+                        onClick={handleSaveVercelToken}
+                        disabled={!vercelTokenInput.trim() || isVercelDeploying}
+                      >
+                        Save Vercel token
+                      </Button>
+                    </div>
+                  )}
                   <Button
                     type="button"
                     variant="outline"
                     className="min-h-[44px] w-full rounded-xl border-zinc-300 text-zinc-700"
                     onClick={handleDeployToVercel}
-                    disabled={isVercelDeploying}
+                    disabled={isVercelDeploying || !vercelConnected}
                   >
-                    {isVercelDeploying ? "Publishing..." : vercelDeployLinks?.siteUrl ? "Republish with Vercel" : "Publish with Vercel"}
+                    {isVercelDeploying
+                      ? "Publishing..."
+                      : vercelDeployLinks?.siteUrl
+                      ? "Republish with Vercel"
+                      : "Publish with Vercel"}
                   </Button>
                   {(isVercelDeploying || vercelDeployLogs.length > 0 || vercelDeployStep) && (
                     <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#111111] shadow-inner">
