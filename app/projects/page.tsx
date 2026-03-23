@@ -174,6 +174,7 @@ export default function ProjectsPage() {
   const [galleryTab, setGalleryTab] = useState<"recent" | "projects" | "templates">("templates")
   const [search, setSearch] = useState("")
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [hasMounted, setHasMounted] = useState(false)
   const [isCreatingTeamWorkspace, setIsCreatingTeamWorkspace] = useState(false)
   const [teamWorkspaceError, setTeamWorkspaceError] = useState<string | null>(null)
   const [isCompanySetupOpen, setIsCompanySetupOpen] = useState(false)
@@ -188,6 +189,11 @@ export default function ProjectsPage() {
   useEffect(() => {
     if (!isTeamsPlan && scope === "team") setScope("user")
   }, [isTeamsPlan, scope])
+
+  useEffect(() => {
+    setHasMounted(true)
+    setIsSidebarOpen(false)
+  }, [])
 
   const getAuthHeader = useCallback(async (): Promise<Record<string, string>> => {
     if (!user) return {}
@@ -316,7 +322,8 @@ export default function ProjectsPage() {
         {/* Sidebar backdrop */}
         <div
           className={cn(
-            "fixed inset-0 z-40 bg-zinc-900/20 backdrop-blur-sm transition-all duration-300",
+            "fixed inset-0 z-40 bg-zinc-900/20 backdrop-blur-sm duration-300",
+            hasMounted && "transition-all",
             isSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
           )}
           onClick={() => setIsSidebarOpen(false)}
@@ -326,9 +333,11 @@ export default function ProjectsPage() {
         {/* ─── All Projects Sidebar ─── */}
         <aside
           className={cn(
-            "fixed inset-y-0 right-0 z-50 w-full max-w-sm border-l border-zinc-200/80 bg-[#f9f9f6] shadow-2xl shadow-zinc-900/10 transition-transform duration-300 ease-in-out",
+            "fixed inset-y-0 right-0 z-50 w-full max-w-sm border-l border-zinc-200/80 bg-[#f9f9f6] shadow-2xl shadow-zinc-900/10 duration-300 ease-in-out",
+            hasMounted && "transition-transform",
             isSidebarOpen ? "translate-x-0" : "translate-x-full"
           )}
+          style={{ transform: isSidebarOpen ? "translateX(0)" : "translateX(100%)" }}
         >
           <div className="flex h-full flex-col">
             {/* Sidebar Header */}

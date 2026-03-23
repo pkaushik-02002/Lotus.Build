@@ -67,14 +67,14 @@ export function Navbar() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-40 p-4">
-      <nav className="max-w-5xl w-full mx-auto flex items-center justify-between h-12 px-4 sm:px-6 rounded-full bg-white border border-zinc-200">
+      <nav className="relative max-w-5xl w-full mx-auto grid h-12 grid-cols-[1fr_auto_1fr] items-center px-4 sm:px-6 rounded-full bg-white border border-zinc-200">
         {/* Left: Logo */}
-        <Link href="/" className="font-display text-lg font-semibold text-zinc-900 shrink-0">
+        <Link href="/" className="justify-self-start font-display text-lg font-semibold text-zinc-900 shrink-0">
           BuildKit
         </Link>
 
         {/* Center Nav Links (desktop/tablet) */}
-        <div className="hidden md:flex items-center justify-center gap-1 absolute left-1/2 -translate-x-1/2">
+        <div className="hidden md:flex items-center justify-center gap-1 justify-self-center">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -87,7 +87,7 @@ export function Navbar() {
         </div>
 
         {/* Right Side */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 justify-self-end">
           {/* User/profile + auth (all breakpoints) */}
           {!mounted || loading ? (
             <div className="w-8 h-8 rounded-full bg-zinc-100 animate-pulse" />
