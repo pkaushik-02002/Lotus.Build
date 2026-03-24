@@ -1,19 +1,30 @@
 import OpenAI from "openai"
+import { AgentClient } from "@21st-sdk/node"
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { Timestamp } from "firebase-admin/firestore"
 import { DEFAULT_PLANS } from "@/lib/firebase"
+import { buildkitAgents } from "@/lib/buildkit-agents"
+import { getAgentRunLimitForPlan, resolveAgentUsageWindow } from "@/lib/agent-quotas"
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const nvidia = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY || process.env.NGC_API_KEY,
   baseURL: "https://integrate.api.nvidia.com/v1",
 })
+const anClient = process.env.API_KEY_21ST
+  ? new AgentClient({ apiKey: process.env.API_KEY_21ST })
+  : null
 
 const DEFAULT_MODEL = "GPT-4-1 Mini"
 const OPENAI_MODEL_MAP: Record<string, string> = {
   "o3-mini": "o3-mini",
   "GPT-4-1 Mini": "gpt-4.1-mini",
   "GPT-4-1": "gpt-4.1",
+}
+const CLAUDE_MODEL_MAP: Record<string, string> = {
+  "Claude Sonnet 4.6": "claude-sonnet-4-6",
+  "Claude Sonnet 4": "claude-sonnet-4",
+  "Claude Opus 4": "claude-opus-4",
 }
 
 const CURATED_NVIDIA_MODELS = [
@@ -42,6 +53,99 @@ let cachedNvidiaModels: { models: string[]; expiresAt: number } | null = null
 type ParsedFileBlock = {
   path: string
   content: string
+}
+
+type AgentStreamParseResult = {
+  content: string
+  streamedLength: number
+}
+
+type Provider = "openai" | "nvidia"
+
+type RuntimeSelection =
+  | { runtime: "builder" }
+  | { runtime: "agent"; agentSlug: string; agentModel?: string }
+
+type StreamState = {
+  usageInfo: any
+  streamedLength: number
+}
+
+function parse21stUiMessageSSE(raw: string): AgentStreamParseResult {
+  const lines = raw.split(/\r?\n/)
+  let content = ""
+
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue
+    const payload = line.slice(5).trim()
+    if (!payload || payload === "[DONE]") continue
+
+    try {
+      const event = JSON.parse(payload) as Record<string, unknown>
+      const type = typeof event.type === "string" ? event.type : ""
+
+      if (type === "text-delta" && typeof event.delta === "string") {
+        content += event.delta
+        continue
+      }
+
+      if (type === "text" && typeof event.text === "string") {
+        content += event.text
+        continue
+      }
+
+      if (type === "message-delta" && typeof event.delta === "string") {
+        content += event.delta
+        continue
+      }
+
+      if (type === "response.output_text.delta" && typeof event.delta === "string") {
+        content += event.delta
+        continue
+      }
+    } catch {
+      // ignore malformed non-JSON events
+    }
+  }
+
+  return { content, streamedLength: content.length }
+}
+
+async function generateWith21stAgent(params: {
+  agentSlug: string
+  model?: string
+  systemPrompt: string
+  userMessageContent: string
+}): Promise<AgentStreamParseResult> {
+  if (!anClient) {
+    throw new Error("21st agent API key is not configured")
+  }
+
+  const result = await anClient.threads.run({
+    agent: params.agentSlug,
+    messages: [
+      {
+        role: "user",
+        parts: [{ type: "text", text: params.userMessageContent }],
+      },
+    ],
+    options: {
+      ...(params.model ? { model: params.model } : {}),
+      systemPrompt: {
+        type: "preset",
+        preset: "claude_code",
+        append: params.systemPrompt,
+      },
+      maxTurns: 6,
+    },
+  })
+
+  const raw = await result.response.text()
+  const parsed = parse21stUiMessageSSE(raw)
+  if (!parsed.content.trim()) {
+    throw new Error("21st agent returned empty content")
+  }
+  return parsed
 }
 
 function isOpenSourceNvidiaModel(modelId: string): boolean {
@@ -113,6 +217,40 @@ async function resolveModel(model: string) {
     client: openai,
     selectedModel: OPENAI_MODEL_MAP[DEFAULT_MODEL],
     provider: "openai" as const,
+  }
+}
+
+function resolveGenerationRuntime(params: {
+  creationMode: "build" | "agent"
+  agentSlug?: string
+  model: string
+}): RuntimeSelection {
+  if (params.creationMode !== "agent") {
+    return { runtime: "builder" }
+  }
+
+  const defaultAgentSlug: string = buildkitAgents[0]?.slug || "my-agent"
+  const knownAgentSlugs: Set<string> = new Set(buildkitAgents.map((agent) => agent.slug as string))
+  const candidateSlug = (params.agentSlug || "").trim()
+
+  let resolvedSlug = defaultAgentSlug
+  if (!candidateSlug) {
+    console.warn("[generate] Agent runtime selected with missing agentSlug; defaulting to primary agent.", {
+      defaultAgentSlug,
+    })
+  } else if (!knownAgentSlugs.has(candidateSlug)) {
+    console.warn("[generate] Agent runtime selected with invalid agentSlug; defaulting to primary agent.", {
+      requestedAgentSlug: candidateSlug,
+      defaultAgentSlug,
+    })
+  } else {
+    resolvedSlug = candidateSlug
+  }
+
+  return {
+    runtime: "agent",
+    agentSlug: resolvedSlug,
+    agentModel: CLAUDE_MODEL_MAP[params.model],
   }
 }
 
@@ -305,11 +443,127 @@ Rules:
   }
 }
 
+async function streamWithResolvedProvider(params: {
+  client: OpenAI
+  provider: Provider
+  selectedModel: string
+  systemPrompt: string
+  userMessageContent: string
+  existingFiles?: { path: string; content: string }[]
+  controller: ReadableStreamDefaultController<Uint8Array>
+  encoder: TextEncoder
+  state: StreamState
+}) {
+  if (params.provider === "nvidia") {
+    const validated = await generateWithNvidiaValidation({
+      client: params.client,
+      selectedModel: params.selectedModel,
+      systemPrompt: params.systemPrompt,
+      userMessageContent: params.userMessageContent,
+      existingFiles: params.existingFiles,
+    })
+    params.state.usageInfo = validated.usageInfo
+    params.state.streamedLength = validated.streamedLength
+    if (validated.remainingIssues.length > 0) {
+      console.warn("NVIDIA generation still has unresolved validation issues:", validated.remainingIssues)
+      const salvaged = await salvageWithOpenAI({
+        systemPrompt: params.systemPrompt,
+        userMessageContent: params.userMessageContent,
+        brokenContent: validated.finalContent,
+        issues: validated.remainingIssues,
+      })
+      params.state.usageInfo = salvaged.usage || params.state.usageInfo
+      params.state.streamedLength = salvaged.content.length
+      params.controller.enqueue(params.encoder.encode(salvaged.content))
+    } else {
+      params.controller.enqueue(params.encoder.encode(validated.finalContent))
+    }
+    return
+  }
+
+  const completion = await params.client.chat.completions.create({
+    model: params.selectedModel,
+    stream: true,
+    messages: [
+      { role: "system", content: params.systemPrompt },
+      { role: "user", content: params.userMessageContent },
+    ],
+    max_tokens: 8000,
+    stream_options: { include_usage: true } as any,
+  })
+
+  for await (const chunk of completion) {
+    if ((chunk as any).usage) params.state.usageInfo = (chunk as any).usage
+    if ((chunk as any).choices && (chunk as any).choices[0]?.usage) {
+      params.state.usageInfo = (chunk as any).choices[0].usage
+    }
+    const content = chunk.choices[0]?.delta?.content
+    if (content) {
+      params.state.streamedLength += content.length
+      params.controller.enqueue(params.encoder.encode(content))
+    }
+  }
+}
+
+async function runBuilderRuntime(params: {
+  client: OpenAI
+  provider: Provider
+  selectedModel: string
+  systemPrompt: string
+  userMessageContent: string
+  existingFiles?: { path: string; content: string }[]
+  controller: ReadableStreamDefaultController<Uint8Array>
+  encoder: TextEncoder
+  state: StreamState
+}) {
+  await streamWithResolvedProvider(params)
+}
+
+async function runAgentRuntime(params: {
+  agentSlug: string
+  agentModel?: string
+  client: OpenAI
+  provider: Provider
+  selectedModel: string
+  systemPrompt: string
+  userMessageContent: string
+  existingFiles?: { path: string; content: string }[]
+  controller: ReadableStreamDefaultController<Uint8Array>
+  encoder: TextEncoder
+  state: StreamState
+}) {
+  // TODO(agent-runtime): introduce explicit clarification and setup-checkpoint stages
+  // once corresponding persisted state + UI wiring are in place.
+  try {
+    const agentResult = await generateWith21stAgent({
+      agentSlug: params.agentSlug,
+      model: params.agentModel,
+      systemPrompt: params.systemPrompt,
+      userMessageContent: params.userMessageContent,
+    })
+    params.state.streamedLength = agentResult.streamedLength
+    params.controller.enqueue(params.encoder.encode(agentResult.content))
+  } catch (agentError) {
+    console.error("21st agent generation failed, falling back to default provider:", agentError)
+    await streamWithResolvedProvider({
+      client: params.client,
+      provider: params.provider,
+      selectedModel: params.selectedModel,
+      systemPrompt: params.systemPrompt,
+      userMessageContent: params.userMessageContent,
+      existingFiles: params.existingFiles,
+      controller: params.controller,
+      encoder: params.encoder,
+      state: params.state,
+    })
+  }
+}
+
 export async function GET() {
   const nvidiaModels = await getNvidiaModels()
   return Response.json({
     defaultModel: DEFAULT_MODEL,
-    models: [...Object.keys(OPENAI_MODEL_MAP), ...nvidiaModels],
+    models: [...Object.keys(OPENAI_MODEL_MAP), ...Object.keys(CLAUDE_MODEL_MAP), ...nvidiaModels],
   })
 }
 
@@ -319,8 +573,22 @@ export async function POST(req: Request) {
     model?: string
     idToken?: string
     existingFiles?: { path: string; content: string }[]
+    creationMode?: "build" | "agent"
+    agentSlug?: string
   }
-  const { prompt, model = DEFAULT_MODEL, idToken, existingFiles } = body
+  const {
+    prompt,
+    model = DEFAULT_MODEL,
+    idToken,
+    existingFiles,
+    creationMode = "build",
+    agentSlug,
+  } = body
+  const runtimeSelection = resolveGenerationRuntime({
+    creationMode,
+    agentSlug,
+    model,
+  })
 
   // authenticate user via Firebase ID token (body) or Authorization Bearer token (header)
   const authHeader = req.headers.get("authorization") || req.headers.get("Authorization")
@@ -338,6 +606,7 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: 'Invalid idToken' }), { status: 401 })
   }
 
+  let planIdForUsage = "free"
   // Check if token period has ended → reset monthly, then check remaining tokens
   try {
     const userRef = adminDb.collection('users').doc(uid)
@@ -348,7 +617,9 @@ export async function POST(req: Request) {
     const userData = userSnap.data() as any
 
     const planId = userData?.planId || 'free'
+    planIdForUsage = planId
     const planTokensPerMonth = userData?.tokensLimit != null ? Number(userData.tokensLimit) : (DEFAULT_PLANS[planId as keyof typeof DEFAULT_PLANS]?.tokensPerMonth || DEFAULT_PLANS.free.tokensPerMonth)
+    const agentRunLimit = getAgentRunLimitForPlan(planId, userData?.agentRunLimit)
 
     const periodEnd = getPeriodEndDate(userData?.tokenUsage?.periodEnd)
     const now = new Date()
@@ -360,6 +631,13 @@ export async function POST(req: Request) {
         tokenUsage: {
           used: 0,
           remaining: planTokensPerMonth,
+          periodStart: Timestamp.fromDate(now),
+          periodEnd: Timestamp.fromDate(nextPeriodEnd),
+        },
+        agentRunLimit,
+        agentUsage: {
+          used: 0,
+          remaining: agentRunLimit,
           periodStart: Timestamp.fromDate(now),
           periodEnd: Timestamp.fromDate(nextPeriodEnd),
         },
@@ -379,8 +657,32 @@ export async function POST(req: Request) {
     remaining = Math.max(0, Number(remaining))
 
     console.log('Token check - User:', uid, 'Plan:', planId, 'Plan Tokens:', planTokensPerMonth, 'Remaining:', remaining, 'TokenUsage:', userData?.tokenUsage)
-    if (remaining <= 0) {
+    if (runtimeSelection.runtime !== "agent" && remaining <= 0) {
       return new Response(JSON.stringify({ error: 'Insufficient tokens' }), { status: 402 })
+    }
+
+    const fallbackPeriodEnd = shouldReset ? getFirstDayOfNextMonth(now) : (periodEnd || getFirstDayOfNextMonth(now))
+    const agentUsageWindow = resolveAgentUsageWindow({
+      rawUsage: shouldReset ? { used: 0, remaining: agentRunLimit, periodStart: now, periodEnd: fallbackPeriodEnd } : userData?.agentUsage,
+      limit: agentRunLimit,
+      fallbackPeriodStart: now,
+      fallbackPeriodEnd,
+    })
+    if (runtimeSelection.runtime === "agent" && agentUsageWindow.remaining <= 0) {
+      return new Response(
+        JSON.stringify({
+          error: "Agents limit reached",
+          code: "AGENT_LIMIT_REACHED",
+          fallbackMode: "build",
+          agent: {
+            remaining: 0,
+            limit: agentRunLimit,
+            planId,
+            periodEnd: agentUsageWindow.periodEnd.toISOString(),
+          },
+        }),
+        { status: 429 }
+      )
     }
   } catch (e) {
     console.error('Token check failed', e)
@@ -529,75 +831,53 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
     : `Create a Vite + React + TypeScript application: ${prompt}`
 
   const encoder = new TextEncoder()
-  let usageInfo: any = null
-  let streamedLength = 0
+  const streamState: StreamState = {
+    usageInfo: null,
+    streamedLength: 0,
+  }
 
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        if (provider === "nvidia") {
-          const validated = await generateWithNvidiaValidation({
+        if (runtimeSelection.runtime === "agent") {
+          await runAgentRuntime({
+            agentSlug: runtimeSelection.agentSlug,
+            agentModel: runtimeSelection.agentModel,
             client,
+            provider,
             selectedModel,
             systemPrompt: finalSystemPrompt,
             userMessageContent,
             existingFiles,
+            controller,
+            encoder,
+            state: streamState,
           })
-          usageInfo = validated.usageInfo
-          streamedLength = validated.streamedLength
-          if (validated.remainingIssues.length > 0) {
-            console.warn("NVIDIA generation still has unresolved validation issues:", validated.remainingIssues)
-            const salvaged = await salvageWithOpenAI({
-              systemPrompt: finalSystemPrompt,
-              userMessageContent,
-              brokenContent: validated.finalContent,
-              issues: validated.remainingIssues,
-            })
-            usageInfo = salvaged.usage || usageInfo
-            streamedLength = salvaged.content.length
-            controller.enqueue(encoder.encode(salvaged.content))
-          } else {
-            controller.enqueue(encoder.encode(validated.finalContent))
-          }
         } else {
-          const completion = await client.chat.completions.create({
-            model: selectedModel,
-            stream: true,
-            messages: [
-              { role: "system", content: finalSystemPrompt },
-              { role: "user", content: userMessageContent },
-            ],
-            max_tokens: 8000,
-            stream_options: { include_usage: true } as any,
+          await runBuilderRuntime({
+            client,
+            provider,
+            selectedModel,
+            systemPrompt: finalSystemPrompt,
+            userMessageContent,
+            existingFiles,
+            controller,
+            encoder,
+            state: streamState,
           })
-
-          for await (const chunk of completion) {
-            if ((chunk as any).usage) {
-              usageInfo = (chunk as any).usage
-            }
-            if ((chunk as any).choices && (chunk as any).choices[0]?.usage) {
-              usageInfo = (chunk as any).choices[0].usage
-            }
-
-            const content = chunk.choices[0]?.delta?.content
-            if (content) {
-              streamedLength += content.length
-              controller.enqueue(encoder.encode(content))
-            }
-          }
         }
 
         // Realistic token count: API usage when present, else ~4 chars per token (OpenAI-style)
         const promptLength = userMessageContent.length
-        const completionLength = streamedLength
+        const completionLength = streamState.streamedLength
         const fallbackTokens = Math.ceil((promptLength + completionLength) / 4)
-        const tokensToCharge = usageInfo
-          ? (usageInfo.total_tokens ?? (usageInfo.prompt_tokens || 0) + (usageInfo.completion_tokens || 0))
+        const tokensToCharge = streamState.usageInfo
+          ? (streamState.usageInfo.total_tokens ?? (streamState.usageInfo.prompt_tokens || 0) + (streamState.usageInfo.completion_tokens || 0))
           : (fallbackTokens > 0 ? fallbackTokens : 0)
 
         // when stream finishes, attempt to deduct tokens in a transaction
         try {
-          if (tokensToCharge > 0) {
+          if ((runtimeSelection.runtime !== "agent" && tokensToCharge > 0) || runtimeSelection.runtime === "agent") {
               const userRef = adminDb.collection('users').doc(uid)
               await adminDb.runTransaction(async (tx) => {
                 const snap = await tx.get(userRef)
@@ -632,15 +912,24 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
                   console.warn(`User ${uid} has ${remaining} tokens but generation used ${tokensToCharge}; consuming remaining balance.`)
                 }
                 const actualCharge = Math.min(tokensToCharge, remaining)
-                if (actualCharge <= 0) return
                 const currentUsed = data?.tokenUsage?.used || data?.tokensUsed || 0
-                const newUsed = currentUsed + actualCharge
-                const newRemaining = Math.max(0, remaining - actualCharge)
+                const newUsed = currentUsed + Math.max(0, actualCharge)
+                const newRemaining = Math.max(0, remaining - Math.max(0, actualCharge))
                 console.log('Transaction - New tokens - Used:', newUsed, 'Remaining:', newRemaining)
-                tx.update(userRef, {
-                  'tokenUsage.used': newUsed,
-                  'tokenUsage.remaining': newRemaining,
-                })
+                const updatePayload: Record<string, unknown> = {}
+                if (runtimeSelection.runtime !== "agent" && tokensToCharge > 0) {
+                  updatePayload['tokenUsage.used'] = newUsed
+                  updatePayload['tokenUsage.remaining'] = newRemaining
+                }
+                if (runtimeSelection.runtime === "agent") {
+                  const agentRunLimit = getAgentRunLimitForPlan(planIdForUsage, data?.agentRunLimit)
+                  const currentAgentUsed = Math.max(0, Number(data?.agentUsage?.used ?? 0))
+                  const currentAgentRemaining = Math.max(0, Number(data?.agentUsage?.remaining ?? agentRunLimit))
+                  updatePayload["agentRunLimit"] = agentRunLimit
+                  updatePayload["agentUsage.used"] = currentAgentUsed + 1
+                  updatePayload["agentUsage.remaining"] = Math.max(0, currentAgentRemaining - 1)
+                }
+                tx.update(userRef, updatePayload)
               })
           }
         } catch (e) {
