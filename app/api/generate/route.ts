@@ -657,7 +657,7 @@ export async function POST(req: Request) {
     remaining = Math.max(0, Number(remaining))
 
     console.log('Token check - User:', uid, 'Plan:', planId, 'Plan Tokens:', planTokensPerMonth, 'Remaining:', remaining, 'TokenUsage:', userData?.tokenUsage)
-    if (remaining <= 0) {
+    if (runtimeSelection.runtime !== "agent" && remaining <= 0) {
       return new Response(JSON.stringify({ error: 'Insufficient tokens' }), { status: 402 })
     }
 
@@ -877,7 +877,7 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
 
         // when stream finishes, attempt to deduct tokens in a transaction
         try {
-          if (tokensToCharge > 0 || runtimeSelection.runtime === "agent") {
+          if ((runtimeSelection.runtime !== "agent" && tokensToCharge > 0) || runtimeSelection.runtime === "agent") {
               const userRef = adminDb.collection('users').doc(uid)
               await adminDb.runTransaction(async (tx) => {
                 const snap = await tx.get(userRef)
@@ -917,7 +917,7 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
                 const newRemaining = Math.max(0, remaining - Math.max(0, actualCharge))
                 console.log('Transaction - New tokens - Used:', newUsed, 'Remaining:', newRemaining)
                 const updatePayload: Record<string, unknown> = {}
-                if (tokensToCharge > 0) {
+                if (runtimeSelection.runtime !== "agent" && tokensToCharge > 0) {
                   updatePayload['tokenUsage.used'] = newUsed
                   updatePayload['tokenUsage.remaining'] = newRemaining
                 }

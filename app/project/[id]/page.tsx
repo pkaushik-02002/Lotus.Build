@@ -718,6 +718,7 @@ function ProjectContent() {
   const projectUrl = typeof window !== "undefined" ? `${window.location.origin}/project/${projectId}` : ""
   const canEdit = !!user && !!project && (!project.ownerId || project.ownerId === user.uid || (Array.isArray(project.editorIds) && project.editorIds.includes(user.uid)))
   const creationMode = project?.creationMode || "build"
+  const isBuildTokenBlocked = remainingTokens <= 0 && creationMode !== "agent"
   const activeAgent = creationMode === "agent"
     ? buildkitAgents.find((agent) => agent.slug === project?.agentSlug) || buildkitAgents[0]
     : null
@@ -1642,7 +1643,7 @@ function ProjectContent() {
 
   const generateCode = async (prompt: string, model?: string) => {
     if (!project) return
-    if (remainingTokens <= 0) {
+    if (isBuildTokenBlocked) {
       setTokenLimitModalOpen(true)
       return
     }
@@ -2281,7 +2282,7 @@ function ProjectContent() {
     const nextMessage = (submittedValue ?? chatInput).trim()
     if (!nextMessage || !project || isGenerating) return
 
-    if (remainingTokens <= 0) {
+    if (isBuildTokenBlocked) {
       setTokenLimitModalOpen(true)
       return
     }
@@ -3175,7 +3176,7 @@ function ProjectContent() {
                           key={chip}
                           type="button"
                           onClick={() => handleSendMessage(chip)}
-                          disabled={!canEdit || isGenerating || remainingTokens <= 0}
+                          disabled={!canEdit || isGenerating || isBuildTokenBlocked}
                           className="whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {chip}
@@ -3189,7 +3190,7 @@ function ProjectContent() {
                       placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
                       onSubmit={(value, model) => handleSendMessage(value, model)}
                       onStop={handleStopGeneration}
-                      disabled={remainingTokens <= 0}
+                      disabled={isBuildTokenBlocked}
                       initialModel={project?.model}
                       visualEditToggle={{
                         active: visualEditActive,
@@ -3277,7 +3278,7 @@ function ProjectContent() {
               </div>
               {canEdit ? (
                 <div className="border-t border-zinc-100 p-2.5 sm:p-3">
-                  {remainingTokens <= 0 && (
+                  {isBuildTokenBlocked && (
                     <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
                       <p className="text-sm font-medium text-amber-900">Youâ€™ve used all credits for this cycle.</p>
                       <p className="mt-0.5 text-xs text-amber-800">
@@ -3295,7 +3296,7 @@ function ProjectContent() {
                         key={chip}
                         type="button"
                         onClick={() => handleSendMessage(chip)}
-                        disabled={!canEdit || isGenerating || remainingTokens <= 0}
+                        disabled={!canEdit || isGenerating || isBuildTokenBlocked}
                         className="whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {chip}
@@ -3309,7 +3310,7 @@ function ProjectContent() {
                     placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
                     onSubmit={(value, model) => handleSendMessage(value, model)}
                     onStop={handleStopGeneration}
-                    disabled={remainingTokens <= 0}
+                    disabled={isBuildTokenBlocked}
                     initialModel={project?.model}
                     visualEditToggle={{
                       active: visualEditActive,
@@ -3517,7 +3518,7 @@ function ProjectContent() {
 
             {canEdit ? (
               <div className="border-t border-zinc-100 p-2.5 sm:p-3">
-                {remainingTokens <= 0 && (
+                {isBuildTokenBlocked && (
                   <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
                     <p className="text-sm font-medium text-amber-900">You’ve used all credits for this cycle.</p>
                     <p className="mt-0.5 text-xs text-amber-800">
@@ -3535,7 +3536,7 @@ function ProjectContent() {
                       key={chip}
                       type="button"
                       onClick={() => handleSendMessage(chip)}
-                      disabled={!canEdit || isGenerating || remainingTokens <= 0}
+                      disabled={!canEdit || isGenerating || isBuildTokenBlocked}
                       className="whitespace-nowrap rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {chip}
@@ -3549,7 +3550,7 @@ function ProjectContent() {
                   placeholder={editingContextLabel ? "Describe what to improve in this section..." : "Describe what to improve on your website..."}
                   onSubmit={(value, model) => handleSendMessage(value, model)}
                   onStop={handleStopGeneration}
-                  disabled={remainingTokens <= 0}
+                  disabled={isBuildTokenBlocked}
                   initialModel={project?.model}
                   visualEditToggle={{
                     active: visualEditActive,
