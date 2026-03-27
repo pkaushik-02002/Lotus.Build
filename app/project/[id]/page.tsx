@@ -245,7 +245,6 @@ function ProjectContent() {
   const [supabaseCreateProjectOpen, setSupabaseCreateProjectOpen] = useState(false)
   const [supabaseAccountConnected, setSupabaseAccountConnected] = useState(false)
   const [supabaseSetupError, setSupabaseSetupError] = useState("")
-  const [supabaseCreatingProject, setSupabaseCreatingProject] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState("")
   const [shareOpen, setShareOpen] = useState(false)
@@ -4376,7 +4375,6 @@ export default function ProjectPage() {
     </ProjectErrorBoundary>
   )
 }
-
 
 
 
