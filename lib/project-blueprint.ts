@@ -220,6 +220,58 @@ function detectProjectTypeSync(prompt: string) {
   return { value: "Website or web app needs confirmation", status: "unknown" as const }
 }
 
+export function promptSuggestsSupabaseBackend(prompt: string) {
+  const text = prompt.toLowerCase()
+
+  const strongSignals = [
+    "supabase",
+    "postgres",
+    "postgresql",
+    "mysql",
+    "mongodb",
+    "prisma",
+    "database",
+    "db",
+    "sql",
+    "auth",
+    "signup",
+    "login",
+    "users",
+    "crud",
+    "api endpoint",
+    "backend",
+    "data model",
+    "store data",
+    "order history",
+    "customer profile",
+  ]
+
+  return strongSignals.some((token) => text.includes(token))
+}
+
+export function blueprintToText(blueprint: ProjectBlueprint) {
+  const lines: string[] = []
+  lines.push(`Summary: ${blueprint.summary}`)
+  if (blueprint.assumptions?.length) {
+    lines.push("Assumptions:")
+    blueprint.assumptions.forEach((item) => lines.push(`- ${item}`))
+  }
+
+  blueprint.sections.forEach((section) => {
+    lines.push(`${section.title}:`)
+    section.items.forEach((item) => {
+      lines.push(`- ${item.label}: ${item.value} (${item.status})`)
+    })
+  })
+
+  if (blueprint.openQuestions?.length) {
+    lines.push("Open questions:")
+    blueprint.openQuestions.forEach((question) => lines.push(`- ${question}`))
+  }
+
+  return lines.join("\n")
+}
+
 function detectAudienceSync(prompt: string) {
   const text = prompt.toLowerCase()
   const match =

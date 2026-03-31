@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { buildkitAgents } from "@/lib/buildkit-agents";
+import { promptSuggestsSupabaseBackend } from "@/lib/project-blueprint";
 import { getAgentRunLimitForPlan } from "@/lib/agent-quotas";
 
 interface UseAutoResizeTextareaProps {
@@ -310,6 +311,7 @@ export function AnimatedAIInput({
         status: "pending",
         creationMode: resolvedCreationMode,
         agentSlug: resolvedCreationMode === "agent" ? primaryAgent.slug : undefined,
+        suggestsBackend: promptSuggestsSupabaseBackend(value.trim()),
         createdAt: serverTimestamp(),
         messages: [],
         ownerId: user?.uid ?? undefined,

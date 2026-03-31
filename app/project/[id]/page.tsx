@@ -90,18 +90,22 @@ import { motion, AnimatePresence } from "framer-motion"
 import { applyPatch } from "diff"
 import type { GeneratedFile, Message, PlanningStatus, Project, ProjectBlueprint, ProjectVisibility } from "./types"
 import { extractAgentMessage } from "./utils"
+import { generateDynamicTimeline } from "@/lib/generate-agent-timeline"
 import { ProjectErrorBoundary, ChatMessage, ResponsivePreview, BrowserNavigator, ProjectCreationStudio, AgentTimelinePanel } from "@/components/project"
 import type { AgentTimelineItem } from "@/components/project/agent-timeline-panel"
 import { WebsiteSettingsPanel } from "@/components/project/website-settings-panel"
 import { SupabaseSetupModal } from "@/components/project/SupabaseSetupModal"
 import { SupabaseProjectSelector } from "@/components/project/SupabaseProjectSelector"
 import { SupabaseCreateProjectModal } from "@/components/project/SupabaseCreateProjectModal"
+import { SupabaseAutoSetupFlow } from "@/components/project/SupabaseAutoSetupFlow"
 import { VisualEditDesignPanel, type DesignSnapshot } from "@/components/project/visual-edit-design-panel"
 import type { VisualEditSectionItem, VisualEditStructureCommand } from "@/components/project/visual-edit-structure"
 import {
   buildPlanningAssistantReply,
   createInitialBlueprint,
   createPlanningMessages,
+  promptSuggestsSupabaseBackend,
+  blueprintToText,
   updateBlueprintFromReply,
 } from "@/lib/project-blueprint"
 import { buildkitAgents } from "@/lib/buildkit-agents"
@@ -244,6 +248,7 @@ function ProjectContent() {
   const [supabaseCreateProjectOpen, setSupabaseCreateProjectOpen] = useState(false)
   const [supabaseAccountConnected, setSupabaseAccountConnected] = useState(false)
   const [supabaseSetupError, setSupabaseSetupError] = useState("")
+  const [backendSetupStatus, setBackendSetupStatus] = useState<"pending" | "in-progress" | "complete" | "failed">("pending")
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState("")
   const [shareOpen, setShareOpen] = useState(false)
@@ -312,6 +317,17 @@ function ProjectContent() {
 
     initBlueprint()
   }, [project])
+
+  // Auto-open Supabase setup prompt when the project context indicates a backend is needed
+  useEffect(() => {
+    if (!project) return
+    const requiresBackend = project.suggestsBackend || promptSuggestsSupabaseBackend(project.prompt || "")
+
+    if (!project.supabaseProjectRef && requiresBackend && !supabaseSetupModalOpen) {
+      setBackendSetupStatus("in-progress")
+      setSupabaseSetupModalOpen(true)
+    }
+  }, [project, project?.prompt, project?.suggestsBackend, project?.supabaseProjectRef, supabaseSetupModalOpen])
 
   // Check if user has Supabase OAuth connection when setup modal is opened
   useEffect(() => {
@@ -633,53 +649,16 @@ function ProjectContent() {
   }, [getAuthHeader])
 
   const agentTimeline = useMemo<AgentTimelineItem[]>(() => {
-    const base = [
-      {
-        key: "analyze",
-        title: "Understanding your request",
-        description: "Reviewing the prompt, website context, and current project files.",
-        detail: "Parsing intent, product scope, and constraints before touching the build.",
-        accent: "Brief",
-      },
-      {
-        key: "plan",
-        title: "Planning the update",
-        description: "Choosing components, layout changes, and implementation steps.",
-        detail: "Sequencing the right changes and reducing risky assumptions first.",
-        accent: "Strategy",
-      },
-      {
-        key: "build",
-        title: "Generating files",
-        description: currentGeneratingFile
-          ? `Working on ${currentGeneratingFile}`
-          : "Writing and updating the files needed for this change.",
-        detail: currentGeneratingFile
-          ? "Applying the current file-level update inside the project workspace."
-          : "Turning the approved direction into concrete file edits.",
-        accent: "Execution",
-      },
-      {
-        key: "finalize",
-        title: "Finalizing output",
-        description: "Wrapping up the response and preparing the updated website state.",
-        detail: "Preparing the handoff back into preview and the next edit loop.",
-        accent: "Handoff",
-      },
-    ] as const
-
-    const normalized = reasoningSteps.map((step) => step.toLowerCase())
-    const currentStage =
-      agentStatus.toLowerCase().includes("final") ? 3
-      : normalized.some((step) => step.includes("creating files")) || !!currentGeneratingFile ? 2
-      : normalized.length >= 2 ? 1
-      : 0
-
-    return base.map((step, index) => ({
-      ...step,
-      status: index < currentStage ? "complete" : index === currentStage ? "active" : "pending",
-    }))
-  }, [agentStatus, currentGeneratingFile, reasoningSteps])
+    return generateDynamicTimeline({
+      creationMode,
+      planningStatus,
+      currentGeneratingFile,
+      agentStatus,
+      reasoningSteps,
+      suggestsBackend: project?.suggestsBackend,
+      backendSetupStatus,
+    })
+  }, [creationMode, planningStatus, currentGeneratingFile, agentStatus, reasoningSteps, project?.suggestsBackend, backendSetupStatus])
 
   const generatedFileCount = generatingFiles.length
 
@@ -1932,6 +1911,17 @@ function ProjectContent() {
         throw new Error("Not authenticated - please sign in")
       }
 
+      const hasBlueprintPlan = project.planningStatus === "approved" || project.planningStatus === "plan-generated"
+      const planDescription = hasBlueprintPlan && project.blueprint ? `Approved plan:\n${blueprintToText(project.blueprint)}` : ""
+      const hasDBHint = promptSuggestsSupabaseBackend(prompt)
+      const generationPrompt = [
+        prompt,
+        planDescription,
+        hasDBHint ? "The user intent indicates a database-backed web app with auth and storage needs. Prioritize Supabase integration if relevant." : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+
       const body: {
         prompt: string
         model: string
@@ -1940,7 +1930,7 @@ function ProjectContent() {
         creationMode?: "build" | "agent"
         agentSlug?: string
       } = {
-        prompt,
+        prompt: generationPrompt,
         model: model || "GPT-4-1 Mini",
         idToken,
         creationMode: project.creationMode || "build",
@@ -2133,7 +2123,7 @@ function ProjectContent() {
       await updateDoc(projectRef, {
         status: "complete",
         files: finalFiles,
-        ...(generationMeta.suggestsBackend ? { suggestsBackend: true } : {}),
+        ...(hasDBHint || generationMeta.suggestsBackend ? { suggestsBackend: true } : {}),
         ...(shouldPersistGenerationMeta ? { generationMeta } : {}),
         ...(agentRuntime ? { agentRuntime } : {}),
         messages: nextMessages,
@@ -2144,7 +2134,7 @@ function ProjectContent() {
               ...prev,
               status: "complete",
               files: finalFiles,
-              ...(generationMeta.suggestsBackend ? { suggestsBackend: true } : {}),
+              ...(hasDBHint || generationMeta.suggestsBackend ? { suggestsBackend: true } : {}),
               ...(shouldPersistGenerationMeta ? { generationMeta } : {}),
               ...(agentRuntime ? { agentRuntime } : {}),
               messages: nextMessages,
@@ -2166,6 +2156,7 @@ function ProjectContent() {
             console.error("Supabase provisioning error:", provisionError)
           }
         } else if (!suggestBackendDismissed) {
+          setBackendSetupStatus("in-progress")
           setSupabaseSetupModalOpen(true)
           setSelectedSupabaseRef("")
         }
@@ -2934,7 +2925,9 @@ function ProjectContent() {
         : prev
     )
     pendingGenerationStartedRef.current = projectId
-    await generateCode(project.prompt, project.model)
+    const planBody = blueprintToText(resolvedBlueprint)
+    const effectivePrompt = `${project.prompt}\n\nApproved plan:\n${planBody}`
+    await generateCode(effectivePrompt, project.model)
   }, [project, resolvedBlueprint, canEdit, projectId, generateCode])
 
   const handleSkipPlanAndBuild = useCallback(async () => {
@@ -2966,7 +2959,9 @@ function ProjectContent() {
         : prev
     )
     pendingGenerationStartedRef.current = projectId
-    await generateCode(project.prompt, project.model)
+    const planBody = blueprintToText(resolvedBlueprint)
+    const effectivePrompt = `${project.prompt}\n\nPlan (skipped approval path, using current assumptions):\n${planBody}`
+    await generateCode(effectivePrompt, project.model)
   }, [project, resolvedBlueprint, canEdit, projectId, generateCode])
 
   const quickActionChips = [
@@ -4386,8 +4381,39 @@ function ProjectContent() {
         </SheetContent>
       </Sheet>
 
-      <SupabaseSetupModal
+      {/* New Auto-Setup Flow - Orchestrator-based */}
+      <SupabaseAutoSetupFlow
         open={supabaseSetupModalOpen}
+        projectId={projectId}
+        onClose={handleSupabaseSetupModalClose}
+        onStatusChange={(status) => {
+          setBackendSetupStatus(status)
+        }}
+        onSetupComplete={async () => {
+          // Mark setup as complete
+          setBackendSetupStatus("complete")
+          
+          // Refresh project
+          await projectRef.get().then(() => {
+            toast({ title: "Backend connected!", description: "Your Supabase database is now integrated." })
+          })
+          
+          // In agent mode, auto-resume generation after a brief delay
+          if (creationMode === "agent" && !isGenerating) {
+            setTimeout(() => {
+              setSupabaseSetupModalOpen(false)
+              // Continue with next phase
+              setAgentStatus("Backend setup complete. Continuing with next implementation step...")
+            }, 1500)
+          } else {
+            setSupabaseSetupModalOpen(false)
+          }
+        }}
+      />
+
+      {/* Legacy modals (keeping for backward compatibility) */}
+      <SupabaseSetupModal
+        open={false}
         loading={supabaseOauthLoading}
         hasOAuthConnection={supabaseAccountConnected}
         error={supabaseSetupError}
@@ -4396,7 +4422,7 @@ function ProjectContent() {
       />
 
       <SupabaseProjectSelector
-        open={supabaseProjectSelectorOpen}
+        open={false}
         projects={supabaseProjects.map(p => ({ id: p.id, name: p.name, region: p.region }))}
         selectedId={selectedSupabaseRef}
         loading={supabaseOauthLoading || supabaseProjectsLoading}
@@ -4413,7 +4439,7 @@ function ProjectContent() {
       />
 
       <SupabaseCreateProjectModal
-        open={supabaseCreateProjectOpen}
+        open={false}
         loading={supabaseCreatingProject}
         error={supabaseSetupError}
         regions={SUPABASE_REGIONS as Array<{ value: string; label: string }>}
