@@ -5,7 +5,8 @@ import { usePathname, useRouter } from "next/navigation"
 import { collection, addDoc, serverTimestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/contexts/auth-context"
-import { getAgentRunLimitForPlan } from "@/lib/agent-quotas"import { promptSuggestsSupabaseBackend } from "@/lib/project-blueprint";
+import { getAgentRunLimitForPlan } from "@/lib/agent-quotas";
+import { promptSuggestsSupabaseBackend } from "@/lib/project-blueprint";
 const PENDING_CREATE_KEY = "buildkit_pending_create"
 
 export function CreateAfterLogin() {
