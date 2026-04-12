@@ -953,7 +953,13 @@ function ProjectContent() {
 
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return
+      console.log("[supabase-oauth] message received", event.origin, event.data)
+      const allowedOrigins = [
+        window.location.origin,
+        "https://builder-studio-6.vercel.app",
+        "https://localhost:3000",
+      ]
+      if (!allowedOrigins.includes(event.origin)) return
       const data = event.data as {
         type?: string; ok?: boolean; message?: string
       }
