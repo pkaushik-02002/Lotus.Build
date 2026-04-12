@@ -954,12 +954,8 @@ function ProjectContent() {
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
       console.log("[supabase-oauth] message received", event.origin, event.data)
-      const allowedOrigins = [
-        window.location.origin,
-        "https://builder-studio-6.vercel.app",
-        "https://localhost:3000",
-      ]
-      if (!allowedOrigins.includes(event.origin)) return
+      const isOAuthOrigin = event.origin === window.location.origin
+      if (!isOAuthOrigin) return
       const data = event.data as {
         type?: string; ok?: boolean; message?: string
       }
@@ -1090,8 +1086,28 @@ function ProjectContent() {
         })
       }
     }
+    const handleOAuthSuccess = async (data: { type?: string; ok?: boolean; message?: string }) => {
+      await onMessage(new MessageEvent("message", { origin: window.location.origin, data }))
+    }
+
+    const poll = setInterval(() => {
+      try {
+        const raw = localStorage.getItem("supabase-oauth-result")
+        if (!raw) return
+        console.log("[supabase-oauth] localStorage hit:", raw)
+        localStorage.removeItem("supabase-oauth-result")
+        const data = JSON.parse(raw)
+        if (data?.type === "supabase-oauth") {
+          handleOAuthSuccess(data)
+        }
+      } catch {}
+    }, 400)
+
     window.addEventListener("message", onMessage)
-    return () => window.removeEventListener("message", onMessage)
+    return () => {
+      window.removeEventListener("message", onMessage)
+      clearInterval(poll)
+    }
   }, [refreshSupabaseProjects])
 
   useEffect(() => {
