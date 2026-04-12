@@ -12,11 +12,27 @@ function callbackHtml(ok: boolean, message: string, builderProjectId?: string) {
     builderProjectId: builderProjectId || null,
   })
   return `<!doctype html><html><body><script>
-    (function () {
-      try { if (window.opener) { window.opener.postMessage(${payload}, window.location.origin); } } catch (_) {}
-      window.close();
-    })();
-  </script><p>${ok ? "Supabase connected. You can close this window." : "Supabase connection failed. You can close this window."}</p></body></html>`
+(function () {
+  var payload = ${payload};
+  console.log("[supabase-callback] running, opener:", typeof window.opener, "closed:", window.opener ? window.opener.closed : "n/a");
+  try {
+    var stored = JSON.stringify(payload);
+    localStorage.setItem("supabase-oauth-result", stored);
+    console.log("[supabase-callback] stored in localStorage:", stored);
+  } catch(e) {
+    console.error("[supabase-callback] localStorage failed:", e);
+  }
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(payload, "*");
+      console.log("[supabase-callback] postMessage sent");
+    }
+  } catch(e) {
+    console.error("[supabase-callback] postMessage failed:", e);
+  }
+  setTimeout(function() { window.close(); }, 800);
+})();
+</script><p>${ok ? "Supabase connected. You can close this window." : "Supabase connection failed. You can close this window."}</p></body></html>`
 }
 
 export async function GET(req: Request) {
@@ -50,6 +66,8 @@ export async function GET(req: Request) {
       expiresIn: token.expires_in,
     })
     await adminDb.collection("supabaseOauthStates").doc(state).delete().catch(() => {})
+    const ok = true
+    console.log("[supabase-callback] html payload:", JSON.stringify({ ok, builderProjectId }))
     return new NextResponse(callbackHtml(true, "connected", builderProjectId), {
       status: 200,
       headers: { "Content-Type": "text/html; charset=utf-8" },
