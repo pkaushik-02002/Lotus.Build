@@ -25,6 +25,7 @@ type ProjectRecord = {
   supabaseAnonKey?: string
   supabaseProjectRef?: string
   supabaseProjectName?: string
+  schemaPushStatus?: string
   generationMeta?: Record<string, unknown>
 }
 
@@ -112,9 +113,14 @@ async function ensureLinkedSupabaseProject(params: {
     throw new Error("No linked Supabase project. Provide supabaseProjectRef or set createProject=true.")
   }
 
-  const projectName =
-    (params.body?.projectName ?? params.body?.name ?? params.project?.name ?? "").toString().trim()
-  const region = (params.body?.region ?? "").toString().trim()
+  const rawName = (params.body?.projectName ?? params.body?.name ?? params.project?.name ?? "").toString().trim()
+  const projectPrompt = (params.project?.prompt ?? "").toString().trim()
+  const projectName = (
+    rawName ||
+    projectPrompt.split(/\s+/).slice(0, 3).join("-").toLowerCase().replace(/[^a-z0-9-]/g, "") ||
+    "my-app"
+  ).slice(0, 40)
+  const region = (params.body?.region ?? "").toString().trim() || "us-east-1"
   const dbPassword =
     (params.body?.dbPassword ?? params.body?.databasePassword ?? "").toString().trim() ||
     crypto.randomBytes(24).toString("base64url")
@@ -123,9 +129,6 @@ async function ensureLinkedSupabaseProject(params: {
     (params.body?.organizationId ?? "").toString().trim()
   )
 
-  if (!projectName || !region) {
-    throw new Error("Missing required fields to create Supabase project: projectName, region")
-  }
   if (!organizationId) {
     throw new Error("No Supabase organization found for this account")
   }
@@ -181,7 +184,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Supabase OAuth connection required" }, { status: 401 })
     }
 
-    if (project?.supabaseProjectRef && project?.supabaseUrl && project?.supabaseAnonKey) {
+    if (project?.supabaseProjectRef && project?.supabaseUrl && project?.supabaseAnonKey && project?.schemaPushStatus === "success") {
       return NextResponse.json({
         supabaseUrl: project.supabaseUrl,
         supabaseAnonKey: project.supabaseAnonKey,

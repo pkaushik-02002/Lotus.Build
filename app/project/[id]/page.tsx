@@ -2380,7 +2380,12 @@ function ProjectContent() {
               "Content-Type": "application/json",
               Authorization: `Bearer ${idToken}`,
             },
-            body: JSON.stringify({ projectId }),
+            body: JSON.stringify({
+              projectId,
+              createProject: true,
+              projectName: ((project?.name ?? "").toString().trim().slice(0, 40)) || "my-app",
+              region: "us-east-1",
+            }),
           })
           const supabaseJson = await supabaseRes.json().catch(() => ({}))
           const supabaseUrl = typeof supabaseJson?.supabaseUrl === "string" ? supabaseJson.supabaseUrl : ""
@@ -2416,6 +2421,19 @@ function ProjectContent() {
             }
             didAutoSetupBackend = true
             setBackendOrchestrationStage("done")
+            // Fire-and-forget: trigger provisioning webhook after integration
+            fetch("/api/integrations/supabase/provision", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+              body: JSON.stringify({ projectId }),
+            }).catch(e => console.error("provision error", e))
+            // Restart sandbox so the new .env / Supabase client is picked up
+            await new Promise(r => setTimeout(r, 1500))
+            await createSandbox(finalFiles, { forceNewSandbox: true })
+          } else if (supabaseRes.status === 401) {
+            toast({ title: "Supabase connection expired", description: "Please reconnect your Supabase account." })
+            setSuggestBackendDismissed(false)
+            setBackendOrchestrationStage("idle")
           } else if (supabaseRes.ok) {
             setBackendOrchestrationStage("idle")
           }
@@ -4080,6 +4098,48 @@ function ProjectContent() {
                     />
                   </div>
                 )}
+                {(isSandboxLoading || (buildSteps.some(s => s.status !== "idle") && !allBuildSuccess) || buildError) && (
+                  <div className="mr-auto w-full max-w-[92%] rounded-2xl border border-zinc-200 bg-white px-4 py-3 space-y-2">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-400">Building preview</p>
+                    <div className="space-y-2">
+                      {buildSteps.map((step) => (
+                        <div key={step.key} className="flex items-center gap-2 text-sm">
+                          {step.status === "running" && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-zinc-700 animate-pulse shrink-0" />
+                          )}
+                          {step.status === "success" && (
+                            <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                          )}
+                          {step.status === "failed" && (
+                            <X className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                          )}
+                          {step.status === "idle" && (
+                            <span className="h-1.5 w-1.5 rounded-full border border-zinc-300 shrink-0" />
+                          )}
+                          <span className={cn(
+                            "text-xs",
+                            step.status === "running" && "text-zinc-900 font-medium",
+                            step.status === "success" && "text-zinc-400",
+                            step.status === "failed" && "text-red-600",
+                            step.status === "idle" && "text-zinc-300"
+                          )}>{step.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {buildError && (
+                      <div className="pt-2 border-t border-zinc-100 space-y-2">
+                        <p className="text-xs text-red-600 font-mono">{buildError}</p>
+                        {onFixWithAI && (
+                          <button onClick={handleFixWithAI} disabled={isFixing}
+                          className="text-xs bg-zinc-900 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 disabled:opacity-50">
+                            <Sparkles className="h-3 w-3" />
+                            {isFixing ? "Fixing..." : "Fix with AI"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -4202,20 +4262,6 @@ function ProjectContent() {
                 )}
               </div>
               <div className="relative min-h-0 flex-1 overflow-hidden">
-                {((isSandboxLoading || !!buildError) && !isTimelineCollapsed) && (
-                  <BuildTimeline
-                    className="p-4 sm:p-6"
-                    steps={buildSteps}
-                    error={buildError}
-                    logs={buildLogs}
-                    logsTail={logsTail}
-                    timer={buildTimer}
-                    failureCategory={buildFailureCategory}
-                    failureReason={fixingMessage || buildFailureReason}
-                    onFixWithAI={handleFixWithAI}
-                    isFixing={isFixing}
-                  />
-                )}
                 {resolvedPreviewUrl ? (
                   <ResponsivePreview
                     src={resolvedPreviewUrl}
@@ -4237,7 +4283,14 @@ function ProjectContent() {
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center px-5 text-center sm:px-8">
-                    {(isPreparingPreview || (hasProjectFiles && previewEnsureFailures < 2)) ? (
+                    {isSandboxLoading && !ensuredPreviewUrl ? (
+                      <div className="flex h-full w-full flex-col gap-3 p-6 animate-pulse">
+                        <div className="h-8 w-2/3 rounded-lg bg-zinc-100" />
+                        <div className="h-4 w-full rounded bg-zinc-100" />
+                        <div className="h-4 w-5/6 rounded bg-zinc-100" />
+                        <div className="flex-1 rounded-xl bg-zinc-100 mt-2" />
+                      </div>
+                    ) : (isPreparingPreview || (hasProjectFiles && previewEnsureFailures < 2)) ? (
                       <div className="flex flex-col items-center">
                         <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
                         <p className="mt-3 text-base font-medium text-zinc-800">Waking up your preview environment...</p>

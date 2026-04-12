@@ -15,8 +15,8 @@ const DEV_PID_PATH = `${PROJECT_DIR}/.dev.pid`
 const DEV_PORT = 3000
 const SANDBOX_TTL_MS = 55 * 60 * 1000
 const MAX_WAIT_SEC = 150
-const PORT_CLEANUP_WAIT_MS = 5000
-const LOG_POLL_INTERVAL_MS = 1500
+const PORT_CLEANUP_WAIT_MS = 2000
+const LOG_POLL_INTERVAL_MS = 800
 
 interface ReadinessCheckResult {
   ready: boolean
@@ -509,18 +509,18 @@ async function checkServerReady(
   if (framework === "next" && portReady) {
     if (logReady) {
       // Give it a bit more time
-      await new Promise(r => setTimeout(r, 3000))
+      await new Promise(r => setTimeout(r, 500))
       const recheck = await previewUrlResponding(sandbox, port)
       if (recheck.responding) {
         return { ready: true, reason: "next-delayed", logs: devLog }
       }
     }
   }
-  
+
   // For Vite: log ready + port listening is usually sufficient
   if (framework === "vite" && portReady && logReady) {
     // Quick URL recheck
-    await new Promise(r => setTimeout(r, 1000))
+    await new Promise(r => setTimeout(r, 500))
     const recheck = await previewUrlResponding(sandbox, port)
     if (recheck.responding) {
       return { ready: true, reason: "vite-ready", logs: devLog }
@@ -1312,19 +1312,10 @@ export async function POST(req: Request) {
           }
 
           if (readyCheck.ready) {
-            // Require two successful URL checks (with delay) to avoid "Closed Port" in iframe
-            await new Promise(r => setTimeout(r, 3000))
-            const recheck1 = await previewUrlResponding(sandbox, DEV_PORT)
-            if (!recheck1.responding) {
-              console.log(`[sandbox] URL recheck 1 failed (${recheck1.error ?? recheck1.statusCode}), continuing to poll`)
-              const pollInterval = i < 30 ? LOG_POLL_INTERVAL_MS : Math.min(LOG_POLL_INTERVAL_MS * 2, 5000)
-              await new Promise(r => setTimeout(r, pollInterval))
-              continue
-            }
-            await new Promise(r => setTimeout(r, 2000))
-            const recheck2 = await previewUrlResponding(sandbox, DEV_PORT)
-            if (!recheck2.responding) {
-              console.log(`[sandbox] URL recheck 2 failed (${recheck2.error ?? recheck2.statusCode}), continuing to poll`)
+            // Require a successful URL check (with delay) to avoid "Closed Port" in iframe
+            await new Promise(r => setTimeout(r, 800))
+            const recheck = await previewUrlResponding(sandbox, DEV_PORT)
+            if (!recheck.responding) {
               await new Promise(r => setTimeout(r, LOG_POLL_INTERVAL_MS))
               continue
             }
