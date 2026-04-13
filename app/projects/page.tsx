@@ -18,6 +18,9 @@ import {
   Lock,
   FolderOpen,
   CreditCard,
+  LayoutGrid,
+  List,
+  ArrowUpRight,
 } from "lucide-react"
 
 import { ProtectedRoute } from "@/components/auth/protected-route"
@@ -122,6 +125,7 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState("")
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [hasMounted, setHasMounted] = useState(false)
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
 
   useEffect(() => {
     if (!isTeamsPlan && scope === "team") setScope("user")
@@ -289,12 +293,14 @@ export default function ProjectsPage() {
             </Link>
 
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              <div className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center">
+                <Search className="h-4 w-4 text-zinc-500" />
+              </div>
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search projects…"
-                className="h-9 w-full rounded-xl border-zinc-200 bg-white/70 pl-9 text-sm placeholder:text-zinc-400 focus:bg-white"
+                className="h-9 w-full rounded-xl border-zinc-200 bg-white/70 pl-10 text-sm placeholder:text-zinc-400 focus:bg-white"
               />
             </div>
 
@@ -376,9 +382,15 @@ export default function ProjectsPage() {
 
           {/* ─── Projects ─── */}
           <section className="mt-12">
-            <div className="mb-4 flex items-center justify-between">
+            {/* Section toolbar */}
+            <div className="mb-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <h2 className="text-sm font-semibold text-zinc-900">Your Projects</h2>
+                <h2 className="text-sm font-semibold text-zinc-900">
+                  Your Projects
+                  {!projectsLoading && filtered.length > 0 && (
+                    <span className="ml-2 text-xs font-normal text-zinc-400">{filtered.length}</span>
+                  )}
+                </h2>
                 {isTeamsPlan && (
                   <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
                     <button
@@ -405,14 +417,41 @@ export default function ProjectsPage() {
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setIsSidebarOpen(true)}
-                className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-800"
-              >
-                <Menu className="h-3.5 w-3.5" />
-                All
-              </button>
+              <div className="flex items-center gap-2">
+                {/* View toggle */}
+                <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("grid")}
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-md transition-all",
+                      viewMode === "grid" ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-700"
+                    )}
+                    aria-label="Grid view"
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("list")}
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-md transition-all",
+                      viewMode === "list" ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-700"
+                    )}
+                    aria-label="List view"
+                  >
+                    <List className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-800"
+                >
+                  <Menu className="h-3.5 w-3.5" />
+                  Browse all
+                </button>
+              </div>
             </div>
 
             {projectsError && (
@@ -422,13 +461,13 @@ export default function ProjectsPage() {
             )}
 
             {projectsLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-16 animate-pulse rounded-xl border border-zinc-200 bg-white" />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-36 animate-pulse rounded-2xl border border-zinc-200 bg-white" />
                 ))}
               </div>
             ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-white/50 px-6 py-14 text-center">
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-white/50 px-6 py-16 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-200 bg-white">
                   <FolderOpen className="h-5 w-5 text-zinc-400" />
                 </div>
@@ -436,61 +475,130 @@ export default function ProjectsPage() {
                 <p className="mt-1 text-xs text-zinc-400">Use the prompt above to generate your first project.</p>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-8">
                 {(["Today", "Yesterday", "Previous"] as const).map((key) => {
                   if (grouped[key].length === 0) return null
                   return (
                     <div key={key}>
-                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">{key}</p>
-                      <div className="space-y-1.5">
-                        {grouped[key].map((p) => (
-                          <div
-                            key={p.id}
-                            className="group/item flex items-center rounded-xl border border-zinc-200 bg-white transition-all hover:border-zinc-300 hover:shadow-sm"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => router.push(`/project/${p.id}`)}
-                              className="min-w-0 flex-1 px-4 py-3.5 text-left"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="truncate text-[13px] font-medium text-zinc-900">
-                                  {projectTitle(p.prompt)}
-                                </span>
-                                <div className="flex shrink-0 items-center gap-2">
-                                  {statusPill(p.status)}
-                                  <span className="hidden items-center gap-1 rounded-full bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 ring-1 ring-zinc-200 sm:inline-flex">
-                                    {p.visibility === "public" || p.visibility === "link-only" ? (
-                                      <><Globe className="h-2.5 w-2.5" />Public</>
-                                    ) : (
-                                      <><Lock className="h-2.5 w-2.5" />Private</>
-                                    )}
-                                  </span>
+                      <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">{key}</p>
+
+                      {viewMode === "grid" ? (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {grouped[key].map((p) => {
+                            const date = toDate(p.createdAt)
+                            const dateStr = date?.toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              year: date.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
+                            }) || "—"
+                            return (
+                              <div
+                                key={p.id}
+                                className="group/card relative flex flex-col rounded-2xl border border-zinc-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md"
+                              >
+                                {/* Status accent bar */}
+                                <div className={cn(
+                                  "h-1 w-full rounded-t-2xl",
+                                  p.status === "complete" && "bg-emerald-400",
+                                  p.status === "generating" && "bg-blue-400",
+                                  p.status === "error" && "bg-red-400",
+                                  p.status === "pending" && "bg-zinc-200",
+                                )} />
+
+                                <button
+                                  type="button"
+                                  onClick={() => router.push(`/project/${p.id}`)}
+                                  className="flex flex-1 flex-col p-4 text-left"
+                                >
+                                  <p className="line-clamp-2 text-[13px] font-medium leading-snug text-zinc-900">
+                                    {projectTitle(p.prompt)}
+                                  </p>
+
+                                  <div className="mt-auto pt-4 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                                      <Clock className="h-3 w-3 shrink-0" />
+                                      {dateStr}
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      {statusPill(p.status)}
+                                    </div>
+                                  </div>
+                                </button>
+
+                                {/* Hover actions */}
+                                <div className="absolute right-2.5 top-3.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/card:opacity-100">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteProject(e, p.id)}
+                                    className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-zinc-300 shadow-sm ring-1 ring-zinc-200 transition-colors hover:bg-red-50 hover:text-red-400"
+                                    aria-label={`Delete ${projectTitle(p.prompt)}`}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => router.push(`/project/${p.id}`)}
+                                    className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-zinc-400 shadow-sm ring-1 ring-zinc-200 transition-colors hover:bg-zinc-50 hover:text-zinc-700"
+                                    aria-label="Open project"
+                                  >
+                                    <ArrowUpRight className="h-3 w-3" />
+                                  </button>
                                 </div>
                               </div>
-                              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-zinc-400">
-                                <Clock className="h-3 w-3 shrink-0" />
-                                {toDate(p.createdAt)?.toLocaleDateString(undefined, {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: toDate(p.createdAt)?.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
-                                }) || "—"}
-                                {p.workspaceName && scope === "team" && (
-                                  <span className="ml-1 text-zinc-400">· {p.workspaceName}</span>
-                                )}
-                              </div>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleDeleteProject(e, p.id)}
-                              className="flex h-full w-11 shrink-0 items-center justify-center rounded-r-xl text-zinc-300 opacity-0 transition-all hover:bg-red-50 hover:text-red-400 group-hover/item:opacity-100"
-                              aria-label={`Delete ${projectTitle(p.prompt)}`}
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {grouped[key].map((p) => (
+                            <div
+                              key={p.id}
+                              className="group/item flex items-center rounded-xl border border-zinc-200 bg-white transition-all hover:border-zinc-300 hover:shadow-sm"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                              <button
+                                type="button"
+                                onClick={() => router.push(`/project/${p.id}`)}
+                                className="min-w-0 flex-1 px-4 py-3.5 text-left"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="truncate text-[13px] font-medium text-zinc-900">
+                                    {projectTitle(p.prompt)}
+                                  </span>
+                                  <div className="flex shrink-0 items-center gap-2">
+                                    {statusPill(p.status)}
+                                    <span className="hidden items-center gap-1 rounded-full bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 ring-1 ring-zinc-200 sm:inline-flex">
+                                      {p.visibility === "public" || p.visibility === "link-only" ? (
+                                        <><Globe className="h-2.5 w-2.5" />Public</>
+                                      ) : (
+                                        <><Lock className="h-2.5 w-2.5" />Private</>
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-zinc-400">
+                                  <Clock className="h-3 w-3 shrink-0" />
+                                  {toDate(p.createdAt)?.toLocaleDateString(undefined, {
+                                    month: "short",
+                                    day: "numeric",
+                                    year: toDate(p.createdAt)?.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
+                                  }) || "—"}
+                                  {p.workspaceName && scope === "team" && (
+                                    <span className="ml-1 text-zinc-400">· {p.workspaceName}</span>
+                                  )}
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteProject(e, p.id)}
+                                className="flex h-full w-11 shrink-0 items-center justify-center rounded-r-xl text-zinc-300 opacity-0 transition-all hover:bg-red-50 hover:text-red-400 group-hover/item:opacity-100"
+                                aria-label={`Delete ${projectTitle(p.prompt)}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
