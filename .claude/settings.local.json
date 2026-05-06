@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
-      "Bash(grep -rn \"BuildKit\\\\|buildkit\" /c/Users/Preet/Desktop/Nebula-website-builder --include=\"*.json\" ! -path \"*/node_modules/*\" ! -path \"*/.next/*\" ! -path \"*/.git/*\")"
+      "Bash(grep -rn \"BuildKit\\\\|buildkit\" /c/Users/Preet/Desktop/Nebula-website-builder --include=\"*.json\" ! -path \"*/node_modules/*\" ! -path \"*/.next/*\" ! -path \"*/.git/*\")",
+      "mcp__plugin_claude-mem_mcp-search__get_observations"
     ]
   }
 }

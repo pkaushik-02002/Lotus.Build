@@ -46,7 +46,7 @@ export function BlueprintSkeleton({ className }: { className?: string }) {
           background: 'linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
           backgroundSize: '50% 100%',
           backgroundRepeat: 'no-repeat',
-          animation: 'shimmer 2.5s infinite linear'
+          animation: 'shimmer 6s infinite linear'
         }}
       />
 

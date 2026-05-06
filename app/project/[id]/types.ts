@@ -88,7 +88,6 @@ export interface Project {
   blueprint?: ProjectBlueprint
   planningStatus?: PlanningStatus
   creationMode?: ProjectCreationMode
-  agentSlug?: string
 }
 
 export interface FileNode {

@@ -1,22 +1,19 @@
 import { NextResponse } from "next/server"
-import { adminDb } from "@/lib/firebase-admin"
 import { requireUserUid } from "@/lib/server-auth"
 import { detectRequiredEnvVars } from "@/lib/env-detection"
+import { assertProjectCanEdit } from "@/lib/project-access"
 
 export const runtime = "nodejs"
 
 export async function GET(req: Request) {
   try {
-    await requireUserUid(req)
+    const uid = await requireUserUid(req)
     const url = new URL(req.url)
     const projectId = url.searchParams.get("projectId")
     if (!projectId) {
       return NextResponse.json({ error: "Missing projectId" }, { status: 400 })
     }
-    const snap = await adminDb.collection("projects").doc(projectId).get()
-    if (!snap.exists) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 })
-    }
+    const { snap } = await assertProjectCanEdit(projectId, uid)
     const data = snap.data() as { files?: { path: string; content: string }[] }
     const files = Array.isArray(data?.files) ? data.files : []
     const requiredEnvVars = detectRequiredEnvVars(files)

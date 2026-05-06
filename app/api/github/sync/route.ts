@@ -32,7 +32,41 @@ function slugifyRepoName(value: string): string {
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80)
-  return slug || "builderstudio-site"
+  return slug || "lotus-build-site"
+}
+
+function withLotusBuildCiWorkflow(files: { path: string; content: string }[]) {
+  const hasWorkflow = files.some((file) => file.path === ".github/workflows/lotus-build-ci.yml")
+  if (hasWorkflow) return files
+
+  return [
+    ...files,
+    {
+      path: ".github/workflows/lotus-build-ci.yml",
+      content: [
+        "name: Lotus Build CI",
+        "",
+        "on:",
+        "  push:",
+        "    branches: [main]",
+        "  pull_request:",
+        "    branches: [main]",
+        "",
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v4",
+        "      - uses: actions/setup-node@v4",
+        "        with:",
+        "          node-version: 20",
+        "          cache: npm",
+        "      - run: npm install --no-audit --no-fund",
+        "      - run: npm run build",
+        "",
+      ].join("\n"),
+    },
+  ]
 }
 
 async function createRepositoryForInstallation(params: {
@@ -140,7 +174,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Project not found or has no files" }, { status: 404 })
     }
 
-    const { data: projectData, files } = project
+    const { data: projectData } = project
+    const files = withLotusBuildCiWorkflow(project.files)
     const installations = await getUserInstallations(token)
     const appInstallations = await getAppInstallations().catch(() => [])
     if (!installations.length) {
@@ -175,7 +210,7 @@ export async function POST(req: Request) {
               }
 
               const putRes = await githubRequest(installationToken, "PUT", `/repos/${owner}/${repoName}/contents/${encodedPath}`, {
-                message: `Sync from BuildKit: ${path}`,
+                message: `Sync from Lotus Build: ${path}`,
                 content,
                 ...(sha ? { sha } : {}),
               })
@@ -290,8 +325,8 @@ export async function POST(req: Request) {
         installationId: chosenInstallationId,
         ownerLogin,
         ownerType,
-        baseName: slugifyRepoName(String(projectData?.name || `builderstudio-${projectId}`)),
-        description: `Generated from BuilderStudio project ${projectId}`,
+        baseName: slugifyRepoName(String(projectData?.name || `lotus-build-${projectId}`)),
+        description: `Generated from Lotus Build project ${projectId}`,
       })
 
       installationId = created.installationId
@@ -318,7 +353,7 @@ export async function POST(req: Request) {
       }
 
       const putRes = await githubRequest(installationToken, "PUT", `/repos/${owner}/${repoName}/contents/${encodedPath}`, {
-        message: `Sync from BuildKit: ${path}`,
+        message: `Sync from Lotus Build: ${path}`,
         content,
         ...(sha ? { sha } : {}),
       })

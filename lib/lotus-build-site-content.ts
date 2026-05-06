@@ -1,6 +1,6 @@
 import { DEFAULT_PLANS_FALLBACK, PLAN_DISPLAY } from "@/lib/plans"
 
-export const buildkitFeatureItems = [
+export const lotusBuildFeatureItems = [
   {
     title: "Prompt to Product",
     description: "Describe your idea and get a working website in seconds.",
@@ -19,14 +19,14 @@ export const buildkitFeatureItems = [
   },
 ] as const
 
-export const buildkitMetrics = [
+export const lotusBuildMetrics = [
   { value: "50K+", label: "Apps Built" },
   { value: "100M+", label: "Lines Generated" },
   { value: "<30s", label: "Average Build Time" },
   { value: "98%", label: "User Satisfaction" },
 ] as const
 
-export const buildkitUseCases = [
+export const lotusBuildUseCases = [
   {
     title: "SaaS Launch",
     description: "Create your homepage, pricing, and onboarding flow in one guided session.",
@@ -41,7 +41,7 @@ export const buildkitUseCases = [
   },
 ] as const
 
-export const buildkitTestimonials = [
+export const lotusBuildTestimonials = [
   {
     text: "I built a complete SaaS dashboard in 30 minutes. What would have taken weeks was done in a single prompt session.",
     name: "Sarah Chen",
@@ -64,7 +64,7 @@ export const buildkitTestimonials = [
   },
 ] as const
 
-export const buildkitFaqs = [
+export const lotusBuildFaqs = [
   {
     q: "How do I create a new project?",
     a: "From the home page, type your idea in the input and press Enter or click the build button. Lotus.build generates a full-stack app from your description, then you can open the project to edit, preview, and deploy.",
@@ -107,24 +107,24 @@ function serializePlanDetails() {
   }).join("\n\n")
 }
 
-export function getBuildKitKnowledge(section: "overview" | "features" | "use-cases" | "faq" | "pricing" | "testimonials" | "all" = "all") {
+export function getLotusBuildKnowledge(section: "overview" | "features" | "use-cases" | "faq" | "pricing" | "testimonials" | "all" = "all") {
   const sections = {
     overview: [
       "Lotus.build is an AI-powered full-stack website and web app builder.",
       "It helps founders, teams, and agencies go from idea to live site quickly.",
       "Core value proposition: describe your idea, generate a product, refine it live, preview it in a sandbox, and deploy it.",
     ].join("\n"),
-    features: buildkitFeatureItems
+    features: lotusBuildFeatureItems
       .map((item) => `- ${item.title}: ${item.description}`)
       .join("\n"),
-    "use-cases": buildkitUseCases
+    "use-cases": lotusBuildUseCases
       .map((item) => `- ${item.title}: ${item.description}`)
       .join("\n"),
-    faq: buildkitFaqs
+    faq: lotusBuildFaqs
       .map((item) => `Q: ${item.q}\nA: ${item.a}`)
       .join("\n\n"),
     pricing: serializePlanDetails(),
-    testimonials: buildkitTestimonials
+    testimonials: lotusBuildTestimonials
       .map((item) => `- ${item.name}, ${item.role}: ${item.text}`)
       .join("\n"),
   }
@@ -138,7 +138,7 @@ export function getBuildKitKnowledge(section: "overview" | "features" | "use-cas
   return sections[section]
 }
 
-export function buildBuildKitAgentPrompt() {
+export function buildLotusBuildAgentPrompt() {
   return `You are an elite senior full-stack engineer and product designer at Lotus.build. You build production-grade, enterprise-quality websites and web applications.
 
 IDENTITY:

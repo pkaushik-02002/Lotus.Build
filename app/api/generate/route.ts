@@ -1,30 +1,19 @@
 import OpenAI from "openai"
-import { AgentClient } from "@21st-sdk/node"
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { Timestamp } from "firebase-admin/firestore"
 import { DEFAULT_PLANS } from "@/lib/firebase"
-import { buildkitAgents } from "@/lib/buildkit-agents"
-import { getAgentRunLimitForPlan, resolveAgentUsageWindow } from "@/lib/agent-quotas"
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const nvidia = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY || process.env.NGC_API_KEY,
   baseURL: "https://integrate.api.nvidia.com/v1",
 })
-const anClient = process.env.API_KEY_21ST
-  ? new AgentClient({ apiKey: process.env.API_KEY_21ST })
-  : null
 
 const DEFAULT_MODEL = "GPT-4-1 Mini"
 const OPENAI_MODEL_MAP: Record<string, string> = {
   "o3-mini": "o3-mini",
   "GPT-4-1 Mini": "gpt-4.1-mini",
   "GPT-4-1": "gpt-4.1",
-}
-const CLAUDE_MODEL_MAP: Record<string, string> = {
-  "Claude Sonnet 4.6": "claude-sonnet-4-6",
-  "Claude Sonnet 4": "claude-sonnet-4",
-  "Claude Opus 4": "claude-opus-4",
 }
 
 const CURATED_NVIDIA_MODELS = [
@@ -60,16 +49,7 @@ type ProjectFileInput = {
   content: string
 }
 
-type AgentStreamParseResult = {
-  content: string
-  streamedLength: number
-}
-
 type Provider = "openai" | "nvidia"
-
-type RuntimeSelection =
-  | { runtime: "builder" }
-  | { runtime: "agent"; agentSlug: string; agentModel?: string }
 
 type StreamState = {
   usageInfo: any
@@ -79,8 +59,133 @@ type StreamState = {
 const FILE_SELECTION_LIMIT = 8
 const FILE_CONTENT_SCAN_LIMIT = 1500
 const PROMPT_KEYWORD_LIMIT = 12
-const OPENAI_TIMEOUT_MS = 25000
+const OPENAI_TIMEOUT_MS = 90000
 const MAX_PROMPT_CHARS = 12000
+const CODE_GENERATION_OUTPUT_RULES = `You are a code generation engine.
+
+CRITICAL OUTPUT RULES:
+- You MUST output ONLY file blocks.
+- Each file MUST be in this format:
+
+===FILE: path===
+file content
+===END_FILE===
+
+- DO NOT output explanations
+- DO NOT output markdown
+- DO NOT output JSON
+- DO NOT output text outside file blocks
+
+If you do not follow this format, the output will be rejected.
+
+Always generate at least:
+- index.html
+- package.json
+- src/App.tsx
+- src/main.tsx
+- src/index.css
+
+TECH STACK:
+- Generate a Vite + React + TypeScript app.
+- Use Tailwind CSS for styling.
+- Do NOT use external UI kits.
+- Do NOT use placeholder text like "Lorem ipsum".
+- Ensure all imports exist and every dependency appears in package.json.
+
+DESIGN QUALITY BAR:
+- Produce premium, production-quality UI comparable to Linear, Notion, and Framer.
+- Avoid generic, templated, AI-like layouts.
+- Use clean, minimal, modern composition with clear hierarchy.
+- Prefer fewer sections that are better executed.
+- Before final output, self-check that the layout is intentional, spacing is consistent, hierarchy is strong, and copy is meaningful.
+- Follow the shared design system below exactly so separate runs feel visually consistent.
+
+DESIGN SYSTEM TOKENS:
+- src/index.css MUST include:
+:root {
+  --radius: 12px;
+  --radius-lg: 16px;
+  --container: 72rem;
+}
+- src/index.css MUST include:
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+- Use Tailwind utilities for styling. Do not introduce a separate component library.
+
+LAYOUT RULES:
+- Default landing page hierarchy: Hero, Features, Proof, Pricing, Footer.
+- ALL primary layout containers MUST use exactly: max-w-6xl mx-auto px-6.
+- ALL page sections MUST use exactly: py-20.
+- Do NOT use random section spacing like py-12, py-16, py-24, my-20, or custom spacing.
+- Avoid clutter and decorative filler.
+- Hero must have a strong two-line-max headline, clear CTA, concise supporting text, and optionally a refined preview/code/product card.
+- Features must be 3 to 4 items max using grid grid-cols-1 md:grid-cols-3 gap-6.
+- Testimonials/proof cards should feel realistic, concise, and credible.
+- Pricing should include 3 tiers with the middle tier subtly highlighted when pricing is relevant.
+
+TYPOGRAPHY RULES:
+- Use Tailwind defaults with a strong scale.
+- Hero text MUST use exactly: text-5xl md:text-6xl font-semibold tracking-tight.
+- Section titles MUST use exactly: text-2xl md:text-3xl font-semibold.
+- Body copy MUST use exactly: text-sm text-zinc-600.
+- Keep copy concise, specific, and domain-aware.
+
+COLOR AND VISUAL RULES:
+- Use a neutral zinc/stone base.
+- Use one accent color only.
+- Background should be refined, such as bg-white or bg-[#0b0b0c].
+- Use text-zinc-900 or text-white for primary text.
+- NO rainbow gradients.
+- NO neon/glow spam.
+- NO generic stock-layout decoration.
+- Do NOT mix radius styles randomly.
+- Cards MUST use exactly: rounded-xl border border-zinc-200 p-6 bg-white.
+- Dark cards may use a consistent equivalent only when the whole page is dark.
+- Use shadow-sm only; avoid heavy shadows.
+- Avoid glassmorphism unless it is extremely subtle and necessary.
+
+COMPONENT RULES:
+- Write clean, semantic React components.
+- Keep component structure simple and readable.
+- No unused imports.
+- No inline styles unless necessary.
+- Use small icons only when they improve scanning.
+- If using icons, prefer lucide-react and include it in package.json.
+- Primary buttons MUST use exactly: px-5 py-2.5 rounded-lg bg-zinc-900 text-white text-sm font-medium.
+- Secondary buttons MUST use exactly: px-5 py-2.5 rounded-lg border border-zinc-300 text-sm.
+- Grids MUST use only one of these patterns: grid grid-cols-1 md:grid-cols-3 gap-6 OR grid grid-cols-1 md:grid-cols-2 gap-8.
+- Do NOT use inconsistent colors, random border radius values, or one-off spacing systems.
+
+ANIMATION RULES:
+- Keep animation minimal.
+- Use Framer Motion only for fade-in and slight translateY.
+- Duration must be 0.3s to 0.5s.
+- No bouncing, spinning, flashy effects, or excessive stagger.
+
+RESPONSIVE RULES:
+- The app must work at 320px, 768px, and desktop widths.
+- index.html MUST include a viewport meta tag.
+- Avoid fixed widths that break mobile.
+- Use min-w-0 and overflow-hidden where needed.
+- Touch targets should be at least 44px on mobile.
+
+SELF-CHECK BEFORE OUTPUT:
+- Confirm every section uses py-20.
+- Confirm every main container uses max-w-6xl mx-auto px-6.
+- Confirm every card uses rounded-xl border border-zinc-200 p-6 bg-white or one consistent dark equivalent.
+- Confirm buttons use the exact primary/secondary classes above.
+- Confirm typography uses the exact scale above.
+- If any file is inconsistent, fix it once before returning file blocks.`
+const STRICT_FILE_FORMAT_RETRY_PROMPT = `Your previous response did not follow the required file format.
+
+You MUST output ONLY file blocks using:
+
+===FILE: path===
+content
+===END_FILE===
+
+Do not include anything else.`
 const PROMPT_KEYWORD_STOPWORDS = new Set([
   "a",
   "an",
@@ -284,83 +389,6 @@ function selectRelevantFiles(existingFiles: ProjectFileInput[], prompt: string) 
   return dedupeFilesByPath(dependencyExpanded).slice(0, FILE_SELECTION_LIMIT * 2)
 }
 
-function parse21stUiMessageSSE(raw: string): AgentStreamParseResult {
-  const lines = raw.split(/\r?\n/)
-  let content = ""
-
-  for (const line of lines) {
-    if (!line.startsWith("data:")) continue
-    const payload = line.slice(5).trim()
-    if (!payload || payload === "[DONE]") continue
-
-    try {
-      const event = JSON.parse(payload) as Record<string, unknown>
-      const type = typeof event.type === "string" ? event.type : ""
-
-      if (type === "text-delta" && typeof event.delta === "string") {
-        content += event.delta
-        continue
-      }
-
-      if (type === "text" && typeof event.text === "string") {
-        content += event.text
-        continue
-      }
-
-      if (type === "message-delta" && typeof event.delta === "string") {
-        content += event.delta
-        continue
-      }
-
-      if (type === "response.output_text.delta" && typeof event.delta === "string") {
-        content += event.delta
-        continue
-      }
-    } catch {
-      // ignore malformed non-JSON events
-    }
-  }
-
-  return { content, streamedLength: content.length }
-}
-
-async function generateWith21stAgent(params: {
-  agentSlug: string
-  model?: string
-  systemPrompt: string
-  userMessageContent: string
-}): Promise<AgentStreamParseResult> {
-  if (!anClient) {
-    throw new Error("21st agent API key is not configured")
-  }
-
-  const result = await anClient.threads.run({
-    agent: params.agentSlug,
-    messages: [
-      {
-        role: "user",
-        parts: [{ type: "text", text: params.userMessageContent }],
-      },
-    ],
-    options: {
-      ...(params.model ? { model: params.model } : {}),
-      systemPrompt: {
-        type: "preset",
-        preset: "claude_code",
-        append: params.systemPrompt,
-      },
-      maxTurns: 6,
-    },
-  })
-
-  const raw = await result.response.text()
-  const parsed = parse21stUiMessageSSE(raw)
-  if (!parsed.content.trim()) {
-    throw new Error("21st agent returned empty content")
-  }
-  return parsed
-}
-
 function isOpenSourceNvidiaModel(modelId: string): boolean {
   const normalized = modelId.toLowerCase()
   return OPEN_SOURCE_MODEL_PATTERNS.some((pattern) => normalized.includes(pattern))
@@ -433,40 +461,6 @@ async function resolveModel(model: string) {
   }
 }
 
-function resolveGenerationRuntime(params: {
-  creationMode: "build" | "agent"
-  agentSlug?: string
-  model: string
-}): RuntimeSelection {
-  if (params.creationMode !== "agent") {
-    return { runtime: "builder" }
-  }
-
-  const defaultAgentSlug: string = buildkitAgents[0]?.slug || "my-agent"
-  const knownAgentSlugs: Set<string> = new Set(buildkitAgents.map((agent) => agent.slug as string))
-  const candidateSlug = (params.agentSlug || "").trim()
-
-  let resolvedSlug = defaultAgentSlug
-  if (!candidateSlug) {
-    console.warn("[generate] Agent runtime selected with missing agentSlug; defaulting to primary agent.", {
-      defaultAgentSlug,
-    })
-  } else if (!knownAgentSlugs.has(candidateSlug)) {
-    console.warn("[generate] Agent runtime selected with invalid agentSlug; defaulting to primary agent.", {
-      requestedAgentSlug: candidateSlug,
-      defaultAgentSlug,
-    })
-  } else {
-    resolvedSlug = candidateSlug
-  }
-
-  return {
-    runtime: "agent",
-    agentSlug: resolvedSlug,
-    agentModel: CLAUDE_MODEL_MAP[params.model],
-  }
-}
-
 function getFirstDayOfNextMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth() + 1, 1)
 }
@@ -482,7 +476,7 @@ function getPeriodEndDate(raw: unknown): Date | null {
 
 function parseFileBlocks(content: string): ParsedFileBlock[] {
   const files: ParsedFileBlock[] = []
-  const fileRegex = /===FILE:\s*(.+?)===\n([\s\S]*?)===END_FILE===/g
+  const fileRegex = /===FILE:\s*(.*?)===([\s\S]*?)===END_FILE===/g
   let match: RegExpExecArray | null
 
   while ((match = fileRegex.exec(content)) !== null) {
@@ -500,6 +494,19 @@ function parseFileBlocks(content: string): ParsedFileBlock[] {
   return files
 }
 
+function assertValidFileBlockOutput(content: string) {
+  if (!content.includes("===FILE:")) {
+    throw new Error("Invalid generator output: no file blocks")
+  }
+
+  const fileBlocks = parseFileBlocks(content)
+  if (fileBlocks.length === 0) {
+    throw new Error("Invalid generator output: no parseable file blocks")
+  }
+
+  return fileBlocks
+}
+
 function validateGeneratedFiles(generatedContent: string, existingFiles?: { path: string; content: string }[]) {
   const fileBlocks = parseFileBlocks(generatedContent)
   const availablePaths = new Set([
@@ -513,6 +520,21 @@ function validateGeneratedFiles(generatedContent: string, existingFiles?: { path
     "index.html",
   ])
   const issues = new Set<string>()
+
+  // Check for mandatory CSS files
+  const hasIndexCss = fileBlocks.some(f => f.path === "src/index.css")
+  const hasTailwindConfig = fileBlocks.some(f => f.path === "tailwind.config.ts")
+  const hasPostcssConfig = fileBlocks.some(f => f.path === "postcss.config.js")
+  
+  if (!hasIndexCss) {
+    issues.add("Missing mandatory file: src/index.css (required for CSS styling)")
+  }
+  if (!hasTailwindConfig) {
+    issues.add("Missing mandatory file: tailwind.config.ts (required for Tailwind compilation)")
+  }
+  if (!hasPostcssConfig) {
+    issues.add("Missing mandatory file: postcss.config.js (required for PostCSS processing)")
+  }
 
   for (const file of fileBlocks) {
     const isCodeFile = /\.(tsx|ts|jsx|js)$/.test(file.path)
@@ -563,6 +585,97 @@ function validateGeneratedFiles(generatedContent: string, existingFiles?: { path
   }
 }
 
+function injectMissingCssFiles(fileBlocks: ParsedFileBlock[]): ParsedFileBlock[] {
+  const paths = new Set(fileBlocks.map(f => f.path))
+  const injected = [...fileBlocks]
+
+  // Inject missing tailwind.config.ts
+  if (!paths.has("tailwind.config.ts")) {
+    injected.push({
+      path: "tailwind.config.ts",
+      content: `import type { Config } from 'tailwindcss'
+
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      borderRadius: {
+        xl: "var(--radius)",
+        lg: "calc(var(--radius) - 2px)",
+        md: "calc(var(--radius) - 4px)",
+      },
+    },
+  },
+  plugins: [],
+} satisfies Config`
+    })
+  }
+
+  // Inject missing postcss.config.js
+  if (!paths.has("postcss.config.js")) {
+    injected.push({
+      path: "postcss.config.js",
+      content: `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}`
+    })
+  }
+
+  // Inject missing src/index.css with proper Tailwind imports
+  if (!paths.has("src/index.css")) {
+    injected.push({
+      path: "src/index.css",
+      content: `@import 'tailwindcss';
+
+:root {
+  --radius: 12px;
+  --radius-lg: 16px;
+  --container: 72rem;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+  }
+}`
+    })
+  }
+
+  // Ensure src/main.tsx imports index.css
+  const mainTsxIndex = injected.findIndex(f => f.path === "src/main.tsx")
+  if (mainTsxIndex !== -1) {
+    const mainContent = injected[mainTsxIndex].content
+    if (!mainContent.includes("import './index.css'") && !mainContent.includes('import "./index.css"')) {
+      // Add import at the top after React imports
+      const lines = mainContent.split('\n')
+      let insertIdx = 0
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes("import React") || lines[i].includes("import react")) {
+          insertIdx = i + 1
+        }
+      }
+      lines.splice(insertIdx, 0, "import './index.css'")
+      injected[mainTsxIndex].content = lines.join('\n')
+    }
+  }
+
+  return injected
+}
+
 async function generateWithNvidiaValidation(params: {
   client: OpenAI
   selectedModel: string
@@ -581,6 +694,25 @@ async function generateWithNvidiaValidation(params: {
 
   let finalContent = initial.choices[0]?.message?.content || ""
   let usageInfo: any = initial.usage || null
+  try {
+    assertValidFileBlockOutput(finalContent)
+  } catch {
+    const retried = await params.client.chat.completions.create({
+      model: params.selectedModel,
+      messages: [
+        { role: "system", content: params.systemPrompt },
+        { role: "user", content: params.userMessageContent },
+        { role: "assistant", content: finalContent },
+        { role: "user", content: STRICT_FILE_FORMAT_RETRY_PROMPT },
+      ],
+      max_tokens: 8000,
+    })
+
+    finalContent = retried.choices[0]?.message?.content || ""
+    usageInfo = retried.usage || usageInfo
+    assertValidFileBlockOutput(finalContent)
+  }
+
   let validation = validateGeneratedFiles(finalContent, params.existingFiles)
 
   if (validation.issues.length > 0) {
@@ -591,6 +723,8 @@ ${validation.issues.map((issue) => `- ${issue}`).join("\n")}
 
 Rules:
 - Keep the same app intent and design direction.
+- CRITICAL: Ensure src/index.css, tailwind.config.ts, and postcss.config.js are included and properly configured.
+- Ensure src/main.tsx imports './index.css' at the top.
 - Fix all missing imports, missing components, and missing assets.
 - Do not explain the fixes.
 - Return exactly one AGENT_MESSAGE and the corrected file blocks only.
@@ -610,6 +744,16 @@ Rules:
     finalContent = repaired.choices[0]?.message?.content || finalContent
     usageInfo = repaired.usage || usageInfo
     validation = validateGeneratedFiles(finalContent, params.existingFiles)
+  }
+
+  // Inject missing CSS files as fallback
+  let finalFileBlocks = validation.fileBlocks
+  if (!finalFileBlocks.some(f => f.path === "tailwind.config.ts") ||
+      !finalFileBlocks.some(f => f.path === "postcss.config.js") ||
+      !finalFileBlocks.some(f => f.path === "src/index.css")) {
+    finalFileBlocks = injectMissingCssFiles(finalFileBlocks)
+    // Reconstruct content from injected blocks
+    finalContent = finalFileBlocks.map(f => `===FILE: ${f.path}===\n${f.content}\n===END_FILE===`).join('\n')
   }
 
   return {
@@ -636,6 +780,8 @@ ${params.brokenContent}
 
 Rules:
 - Keep the same product request and overall intent.
+- CRITICAL: Ensure src/index.css, tailwind.config.ts, and postcss.config.js are included and properly configured.
+- Ensure src/main.tsx imports './index.css' at the top.
 - Return exactly one AGENT_MESSAGE and then only ===FILE=== blocks.
 - Ensure every import resolves and every referenced component exists.
 - Do not leave placeholders or missing files.`
@@ -650,8 +796,44 @@ Rules:
     max_tokens: 8000,
   })
 
+  let content = repaired.choices[0]?.message?.content || params.brokenContent
+  
+  // Inject missing CSS files if needed
+  const fileBlocks = parseFileBlocks(content)
+  if (!fileBlocks.some(f => f.path === "tailwind.config.ts") ||
+      !fileBlocks.some(f => f.path === "postcss.config.js") ||
+      !fileBlocks.some(f => f.path === "src/index.css")) {
+    const injectedBlocks = injectMissingCssFiles(fileBlocks)
+    content = injectedBlocks.map(f => `===FILE: ${f.path}===\n${f.content}\n===END_FILE===`).join('\n')
+  }
+
   return {
-    content: repaired.choices[0]?.message?.content || params.brokenContent,
+    content,
+    usage: repaired.usage || null,
+  }
+}
+
+async function repairInvalidFileFormatWithOpenAI(params: {
+  systemPrompt: string
+  userMessageContent: string
+  brokenContent: string
+}) {
+  const repaired = await openai.chat.completions.create({
+    model: OPENAI_MODEL_MAP[DEFAULT_MODEL],
+    messages: [
+      { role: "system", content: params.systemPrompt },
+      { role: "user", content: params.userMessageContent },
+      { role: "assistant", content: params.brokenContent },
+      { role: "user", content: STRICT_FILE_FORMAT_RETRY_PROMPT },
+    ],
+    max_tokens: 8000,
+  })
+
+  const content = repaired.choices[0]?.message?.content || ""
+  assertValidFileBlockOutput(content)
+
+  return {
+    content,
     usage: repaired.usage || null,
   }
 }
@@ -677,6 +859,20 @@ async function streamWithResolvedProvider(params: {
     })
     params.state.usageInfo = validated.usageInfo
     params.state.streamedLength = validated.streamedLength
+    try {
+      assertValidFileBlockOutput(validated.finalContent)
+    } catch {
+      const repaired = await repairInvalidFileFormatWithOpenAI({
+        systemPrompt: params.systemPrompt,
+        userMessageContent: params.userMessageContent,
+        brokenContent: validated.finalContent,
+      })
+      params.state.usageInfo = repaired.usage || params.state.usageInfo
+      params.state.streamedLength = repaired.content.length
+      params.controller.enqueue(params.encoder.encode(repaired.content))
+      return
+    }
+
     if (validated.remainingIssues.length > 0) {
       console.warn("NVIDIA generation still has unresolved validation issues:", validated.remainingIssues)
       const salvaged = await salvageWithOpenAI({
@@ -685,6 +881,7 @@ async function streamWithResolvedProvider(params: {
         brokenContent: validated.finalContent,
         issues: validated.remainingIssues,
       })
+      assertValidFileBlockOutput(salvaged.content)
       params.state.usageInfo = salvaged.usage || params.state.usageInfo
       params.state.streamedLength = salvaged.content.length
       params.controller.enqueue(params.encoder.encode(salvaged.content))
@@ -725,6 +922,21 @@ async function streamWithResolvedProvider(params: {
     }
   }
 
+  const streamCompletionToText = async (completion: Awaited<ReturnType<typeof createOpenAICompletion>>) => {
+    let output = ""
+
+    for await (const chunk of completion) {
+      if ((chunk as any).usage) params.state.usageInfo = (chunk as any).usage
+      if ((chunk as any).choices && (chunk as any).choices[0]?.usage) {
+        params.state.usageInfo = (chunk as any).choices[0].usage
+      }
+      const content = chunk.choices[0]?.delta?.content
+      if (content) output += content
+    }
+
+    return output
+  }
+
   let completion
   let basePrompt = params.userMessageContent
 
@@ -752,17 +964,20 @@ async function streamWithResolvedProvider(params: {
     }
   }
 
-  for await (const chunk of completion) {
-    if ((chunk as any).usage) params.state.usageInfo = (chunk as any).usage
-    if ((chunk as any).choices && (chunk as any).choices[0]?.usage) {
-      params.state.usageInfo = (chunk as any).choices[0].usage
-    }
-    const content = chunk.choices[0]?.delta?.content
-    if (content) {
-      params.state.streamedLength += content.length
-      params.controller.enqueue(params.encoder.encode(content))
-    }
+  let output = await streamCompletionToText(completion)
+
+  try {
+    assertValidFileBlockOutput(output)
+  } catch {
+    const retryCompletion = await createOpenAICompletion(
+      `${params.userMessageContent}\n\n${STRICT_FILE_FORMAT_RETRY_PROMPT}`
+    )
+    output = await streamCompletionToText(retryCompletion)
+    assertValidFileBlockOutput(output)
   }
+
+  params.state.streamedLength += output.length
+  params.controller.enqueue(params.encoder.encode(output))
 }
 
 async function runBuilderRuntime(params: {
@@ -779,51 +994,11 @@ async function runBuilderRuntime(params: {
   await streamWithResolvedProvider(params)
 }
 
-async function runAgentRuntime(params: {
-  agentSlug: string
-  agentModel?: string
-  client: OpenAI
-  provider: Provider
-  selectedModel: string
-  systemPrompt: string
-  userMessageContent: string
-  existingFiles?: { path: string; content: string }[]
-  controller: ReadableStreamDefaultController<Uint8Array>
-  encoder: TextEncoder
-  state: StreamState
-}) {
-  // TODO(agent-runtime): introduce explicit clarification and setup-checkpoint stages
-  // once corresponding persisted state + UI wiring are in place.
-  try {
-    const agentResult = await generateWith21stAgent({
-      agentSlug: params.agentSlug,
-      model: params.agentModel,
-      systemPrompt: params.systemPrompt,
-      userMessageContent: params.userMessageContent,
-    })
-    params.state.streamedLength = agentResult.streamedLength
-    params.controller.enqueue(params.encoder.encode(agentResult.content))
-  } catch (agentError) {
-    console.error("21st agent generation failed, falling back to default provider:", agentError)
-    await streamWithResolvedProvider({
-      client: params.client,
-      provider: params.provider,
-      selectedModel: params.selectedModel,
-      systemPrompt: params.systemPrompt,
-      userMessageContent: params.userMessageContent,
-      existingFiles: params.existingFiles,
-      controller: params.controller,
-      encoder: params.encoder,
-      state: params.state,
-    })
-  }
-}
-
 export async function GET() {
   const nvidiaModels = await getNvidiaModels()
   return Response.json({
     defaultModel: DEFAULT_MODEL,
-    models: [...Object.keys(OPENAI_MODEL_MAP), ...Object.keys(CLAUDE_MODEL_MAP), ...nvidiaModels],
+    models: [...Object.keys(OPENAI_MODEL_MAP), ...nvidiaModels],
   })
 }
 
@@ -833,8 +1008,6 @@ export async function POST(req: Request) {
     model?: string
     idToken?: string
     existingFiles?: { path: string; content: string }[]
-    creationMode?: "build" | "agent"
-    agentSlug?: string
     cloneContext?: { title: string; description: string; markdown: string; sourceUrl: string }
   } | null
   if (!body || typeof body !== "object") {
@@ -845,14 +1018,7 @@ export async function POST(req: Request) {
     model = DEFAULT_MODEL,
     idToken,
     existingFiles,
-    creationMode = "build",
-    agentSlug,
   } = body
-  const runtimeSelection = resolveGenerationRuntime({
-    creationMode,
-    agentSlug,
-    model,
-  })
 
   // authenticate user via Firebase ID token (body) or Authorization Bearer token (header)
   const authHeader = req.headers.get("authorization") || req.headers.get("Authorization")
@@ -870,7 +1036,6 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: 'Invalid idToken' }), { status: 401 })
   }
 
-  let planIdForUsage = "free"
   // Check if token period has ended → reset monthly, then check remaining tokens
   try {
     const userRef = adminDb.collection('users').doc(uid)
@@ -881,9 +1046,7 @@ export async function POST(req: Request) {
     const userData = userSnap.data() as any
 
     const planId = userData?.planId || 'free'
-    planIdForUsage = planId
     const planTokensPerMonth = userData?.tokensLimit != null ? Number(userData.tokensLimit) : (DEFAULT_PLANS[planId as keyof typeof DEFAULT_PLANS]?.tokensPerMonth || DEFAULT_PLANS.free.tokensPerMonth)
-    const agentRunLimit = getAgentRunLimitForPlan(planId, userData?.agentRunLimit)
 
     const periodEnd = getPeriodEndDate(userData?.tokenUsage?.periodEnd)
     const now = new Date()
@@ -895,13 +1058,6 @@ export async function POST(req: Request) {
         tokenUsage: {
           used: 0,
           remaining: planTokensPerMonth,
-          periodStart: Timestamp.fromDate(now),
-          periodEnd: Timestamp.fromDate(nextPeriodEnd),
-        },
-        agentRunLimit,
-        agentUsage: {
-          used: 0,
-          remaining: agentRunLimit,
           periodStart: Timestamp.fromDate(now),
           periodEnd: Timestamp.fromDate(nextPeriodEnd),
         },
@@ -921,32 +1077,8 @@ export async function POST(req: Request) {
     remaining = Math.max(0, Number(remaining))
 
     console.log('Token check - User:', uid, 'Plan:', planId, 'Plan Tokens:', planTokensPerMonth, 'Remaining:', remaining, 'TokenUsage:', userData?.tokenUsage)
-    if (runtimeSelection.runtime !== "agent" && remaining <= 0) {
+    if (remaining <= 0) {
       return new Response(JSON.stringify({ error: 'Insufficient tokens' }), { status: 402 })
-    }
-
-    const fallbackPeriodEnd = shouldReset ? getFirstDayOfNextMonth(now) : (periodEnd || getFirstDayOfNextMonth(now))
-    const agentUsageWindow = resolveAgentUsageWindow({
-      rawUsage: shouldReset ? { used: 0, remaining: agentRunLimit, periodStart: now, periodEnd: fallbackPeriodEnd } : userData?.agentUsage,
-      limit: agentRunLimit,
-      fallbackPeriodStart: now,
-      fallbackPeriodEnd,
-    })
-    if (runtimeSelection.runtime === "agent" && agentUsageWindow.remaining <= 0) {
-      return new Response(
-        JSON.stringify({
-          error: "Agents limit reached",
-          code: "AGENT_LIMIT_REACHED",
-          fallbackMode: "build",
-          agent: {
-            remaining: 0,
-            limit: agentRunLimit,
-            planId,
-            periodEnd: agentUsageWindow.periodEnd.toISOString(),
-          },
-        }),
-        { status: 429 }
-      )
     }
   } catch (e) {
     console.error('Token check failed', e)
@@ -1074,16 +1206,17 @@ You must respond with a STREAMING file format. Output each file in this exact fo
 [file content here]
 ===END_FILE===
 
-Generate files in this order:
-1. package.json - Dependencies first
+Generate files in this order (ALL MANDATORY):
+1. package.json - Dependencies first (MUST include tailwindcss, postcss, autoprefixer)
 2. vite.config.ts
-3. index.html
-4. src/main.tsx
-5. src/App.tsx
-6. src/index.css
-7. src/components/*.tsx - Any necessary components
-8. src/lib/*.ts - Utility functions if needed
-9. tailwind.config.ts and postcss.config.js if Tailwind is used
+3. tailwind.config.ts - ALWAYS (required for Tailwind compilation)
+4. postcss.config.js - ALWAYS (required for Tailwind compilation)
+5. index.html
+6. src/main.tsx - MUST import './index.css'
+7. src/App.tsx
+8. src/index.css - ALWAYS (must include @import 'tailwindcss' and custom properties)
+9. src/components/*.tsx - Any necessary components
+10. src/lib/*.ts - Utility functions if needed
 
 Use these technologies:
 - TypeScript
@@ -1142,7 +1275,7 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
   4. package.json includes every dependency used.
   5. No file is omitted if another file depends on it.`
 
-  const systemPrompt = isFollowUp ? systemPromptFollowUp : systemPromptNew
+  const systemPrompt = CODE_GENERATION_OUTPUT_RULES
   const finalSystemPrompt = provider === "nvidia"
     ? `${systemPrompt}\n\n${nvidiaReliabilityPrompt}`
     : systemPrompt
@@ -1165,33 +1298,17 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        if (runtimeSelection.runtime === "agent") {
-          await runAgentRuntime({
-            agentSlug: runtimeSelection.agentSlug,
-            agentModel: runtimeSelection.agentModel,
-            client,
-            provider,
-            selectedModel,
-            systemPrompt: finalSystemPrompt,
-            userMessageContent,
-            existingFiles,
-            controller,
-            encoder,
-            state: streamState,
-          })
-        } else {
-          await runBuilderRuntime({
-            client,
-            provider,
-            selectedModel,
-            systemPrompt: finalSystemPrompt,
-            userMessageContent,
-            existingFiles,
-            controller,
-            encoder,
-            state: streamState,
-          })
-        }
+        await runBuilderRuntime({
+          client,
+          provider,
+          selectedModel,
+          systemPrompt: finalSystemPrompt,
+          userMessageContent,
+          existingFiles,
+          controller,
+          encoder,
+          state: streamState,
+        })
 
         // Realistic token count: API usage when present, else ~4 chars per token (OpenAI-style)
         const promptLength = userMessageContent.length
@@ -1203,7 +1320,7 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
 
         // when stream finishes, attempt to deduct tokens in a transaction
         try {
-          if ((runtimeSelection.runtime !== "agent" && tokensToCharge > 0) || runtimeSelection.runtime === "agent") {
+          if (tokensToCharge > 0) {
               const userRef = adminDb.collection('users').doc(uid)
               await adminDb.runTransaction(async (tx) => {
                 const snap = await tx.get(userRef)
@@ -1243,18 +1360,8 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
                 const newRemaining = Math.max(0, remaining - Math.max(0, actualCharge))
                 console.log('Transaction - New tokens - Used:', newUsed, 'Remaining:', newRemaining)
                 const updatePayload: Record<string, unknown> = {}
-                if (runtimeSelection.runtime !== "agent" && tokensToCharge > 0) {
-                  updatePayload['tokenUsage.used'] = newUsed
-                  updatePayload['tokenUsage.remaining'] = newRemaining
-                }
-                if (runtimeSelection.runtime === "agent") {
-                  const agentRunLimit = getAgentRunLimitForPlan(planIdForUsage, data?.agentRunLimit)
-                  const currentAgentUsed = Math.max(0, Number(data?.agentUsage?.used ?? 0))
-                  const currentAgentRemaining = Math.max(0, Number(data?.agentUsage?.remaining ?? agentRunLimit))
-                  updatePayload["agentRunLimit"] = agentRunLimit
-                  updatePayload["agentUsage.used"] = currentAgentUsed + 1
-                  updatePayload["agentUsage.remaining"] = Math.max(0, currentAgentRemaining - 1)
-                }
+                updatePayload['tokenUsage.used'] = newUsed
+                updatePayload['tokenUsage.remaining'] = newRemaining
                 tx.update(userRef, updatePayload)
               })
           }
@@ -1269,12 +1376,7 @@ OPEN-SOURCE MODEL RELIABILITY RULES (MANDATORY):
         console.error('Stream error', err)
 
         if (err?.message === "MODEL_TIMEOUT") {
-          controller.enqueue(
-            encoder.encode(
-              "===AGENT_MESSAGE=== The request took too long. Try simplifying your request or retrying. ===END_AGENT_MESSAGE==="
-            )
-          )
-          controller.close()
+          controller.error(err)
           return
         }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Check, Loader2, X, ChevronRight, ChevronDown, Terminal, Clock, Sparkles, Settings2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -196,6 +196,34 @@ export function BuildTimeline({
     ? "bg-emerald-500"
     : "bg-zinc-500 animate-pulse";
 
+  // Parse file names from logs tail for realtime file list
+  const fileList = useMemo(() => {
+    const logsCombined = (logsTail || logs?.install || logs?.dev || "").toString();
+    if (!logsCombined) return [] as string[];
+    const set = new Set<string>();
+    const lines = logsCombined.split(/\r?\n/);
+    const fileRe = /([A-Za-z0-9_\/\-.]+?\.(?:tsx|ts|jsx|js|css|json|html|md|png|svg))/gi;
+    for (const ln of lines) {
+      const line = ln.trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line) as any;
+        if (parsed?.type === "file" && (parsed.path || parsed.file)) {
+          set.add(String(parsed.path || parsed.file));
+          continue;
+        }
+        if (typeof parsed?.message === "string") {
+          let m: RegExpExecArray | null;
+          while ((m = fileRe.exec(parsed.message))) set.add(m[1]);
+        }
+      } catch {
+        let m: RegExpExecArray | null;
+        while ((m = fileRe.exec(line))) set.add(m[1]);
+      }
+    }
+    return Array.from(set).slice(-30);
+  }, [logsTail, logs?.install, logs?.dev]);
+
   return (
     <div
       className={cn(
@@ -311,6 +339,27 @@ export function BuildTimeline({
             })}
           </div>
         </div>
+
+        {/* File list (realtime) */}
+        {fileList.length > 0 && (
+          <div className="px-4 pb-2">
+            <div className="flex flex-wrap gap-2">
+              {fileList.map((f, i) => (
+                <div key={i} className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 shadow-sm">
+                  <svg className="h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                    <g stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" fill="none">
+                      <ellipse cx="12" cy="12" rx="4.5" ry="8" transform="rotate(0 12 12)" />
+                      <ellipse cx="12" cy="12" rx="4.5" ry="8" transform="rotate(60 12 12)" />
+                      <ellipse cx="12" cy="12" rx="4.5" ry="8" transform="rotate(120 12 12)" />
+                      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+                    </g>
+                  </svg>
+                  <span className="truncate max-w-[160px] leading-tight">{f}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Error detail */}
         {hasFailed && error && (

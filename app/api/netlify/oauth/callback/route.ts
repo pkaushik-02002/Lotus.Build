@@ -4,6 +4,12 @@ import { setUserNetlifyToken } from "@/lib/server-auth"
 
 export const runtime = "nodejs"
 
+function getSafeReturnPath(value: string | undefined): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return ""
+  if (!value.startsWith("/computer/") && !value.startsWith("/project/") && value !== "/projects") return ""
+  return value
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const code = url.searchParams.get("code")
@@ -26,7 +32,11 @@ export async function GET(req: Request) {
     return new NextResponse("Invalid state", { status: 400 })
   }
 
-  const { uid, projectId } = stateSnap.data() as any
+  const { uid, projectId, returnTo } = stateSnap.data() as {
+    uid?: string
+    projectId?: string
+    returnTo?: string
+  }
   if (!uid) {
     return new NextResponse("Invalid state payload", { status: 400 })
   }
@@ -58,7 +68,7 @@ export async function GET(req: Request) {
   await adminDb.collection("netlifyOauthStates").doc(state).delete().catch(() => {})
 
   const redirectTo = new URL(process.env.NEXT_PUBLIC_APP_URL || url.origin)
-  redirectTo.pathname = projectId ? `/project/${projectId}` : "/projects"
+  redirectTo.pathname = getSafeReturnPath(returnTo) || (projectId ? `/project/${projectId}` : "/projects")
   redirectTo.searchParams.set("netlify", "connected")
 
   return NextResponse.redirect(redirectTo.toString())

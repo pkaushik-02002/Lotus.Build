@@ -4,6 +4,12 @@ import { setGitHubToken } from "@/lib/server-auth"
 
 export const runtime = "nodejs"
 
+function getSafeReturnPath(value: string | undefined): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return ""
+  if (!value.startsWith("/computer/") && !value.startsWith("/project/") && value !== "/settings") return ""
+  return value
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const code = url.searchParams.get("code")
@@ -26,7 +32,11 @@ export async function GET(req: Request) {
     return new NextResponse("Invalid or expired state", { status: 400 })
   }
 
-  const { uid, projectId } = (stateSnap.data() ?? {}) as { uid?: string; projectId?: string }
+  const { uid, projectId, returnTo } = (stateSnap.data() ?? {}) as {
+    uid?: string
+    projectId?: string
+    returnTo?: string
+  }
   if (!uid) {
     return new NextResponse("Invalid state payload", { status: 400 })
   }
@@ -58,7 +68,7 @@ export async function GET(req: Request) {
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || url.origin
   const redirectTo = new URL(baseUrl)
-  redirectTo.pathname = projectId ? `/project/${projectId}` : "/settings"
+  redirectTo.pathname = getSafeReturnPath(returnTo) || (projectId ? `/project/${projectId}` : "/settings")
   redirectTo.searchParams.set("github", "connected")
 
   return NextResponse.redirect(redirectTo.toString())

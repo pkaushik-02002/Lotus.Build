@@ -101,7 +101,6 @@ export function normalizeProject(
     blueprint: isRecord(record.blueprint) ? (record.blueprint as Project["blueprint"]) : undefined,
     planningStatus: record.planningStatus as Project["planningStatus"],
     creationMode: record.creationMode as Project["creationMode"],
-    agentSlug: typeof record.agentSlug === "string" ? record.agentSlug : undefined,
   }
 }
 

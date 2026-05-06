@@ -10,12 +10,12 @@ function jsonLine(obj: any) {
 
 /** Vercel: project names must be lowercase, letters/digits/._-, no sequence '---', max 100 chars */
 function toVercelProjectName(projectId: string): string {
-  const base = `buildkit-${projectId}`
+  const base = `lotus-build-${projectId}`
     .toLowerCase()
     .replace(/[^a-z0-9._-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
-  return (base || "buildkit-project").slice(0, 100)
+  return (base || "lotus-build-project").slice(0, 100)
 }
 
 async function getProjectWithVercel(projectId: string) {
@@ -24,8 +24,9 @@ async function getProjectWithVercel(projectId: string) {
   const data = snap.data() as any
   const files = Array.isArray(data?.files) ? data.files : null
   const token = typeof data?.vercelToken === "string" ? data.vercelToken : null
+  const teamId = typeof data?.vercelTeamId === "string" ? data.vercelTeamId : null
   const name = toVercelProjectName(projectId)
-  return { data, files, token, name }
+  return { data, files, token, teamId, name }
 }
 
 function normalizeSourceImports(files: any[]) {

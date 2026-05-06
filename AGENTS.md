@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository is a production-quality AI website/app builder called **BuildKit / Nebula Website Builder**.
+This repository is a production-quality AI website/app builder called **Lotus Build / Nebula Website Builder**.
 
 Agents working in this repo must behave like **senior product engineers**, not junior code generators.
 
@@ -21,7 +21,7 @@ When something is unclear, **ask concise clarifying questions first** rather tha
 
 ## Product overview
 
-BuildKit / Nebula Website Builder is an AI website/app builder.
+Lotus Build / Nebula Website Builder is an AI website/app builder.
 
 High-level architecture:
 - Firestore `projects` documents hold project state
@@ -367,7 +367,7 @@ It must also be:
 
 ## Visual/theme rules
 
-Use the existing BuildKit theme and visual language.
+Use the existing Lotus Build theme and visual language.
 
 Do not invent a new palette.
 

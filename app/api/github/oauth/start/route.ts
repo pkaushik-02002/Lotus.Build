@@ -4,12 +4,19 @@ import { adminDb } from "@/lib/firebase-admin"
 
 export const runtime = "nodejs"
 
+function getSafeReturnPath(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return ""
+  if (!value.startsWith("/computer/") && !value.startsWith("/project/") && value !== "/settings") return ""
+  return value
+}
+
 export async function GET(req: Request) {
   try {
     const uid = await requireUserUid(req)
 
     const url = new URL(req.url)
     const projectId = url.searchParams.get("projectId") || ""
+    const returnTo = getSafeReturnPath(url.searchParams.get("returnTo"))
 
     const clientId = process.env.GITHUB_CLIENT_ID
     const redirectUri = process.env.GITHUB_REDIRECT_URI
@@ -29,6 +36,7 @@ export async function GET(req: Request) {
       {
         uid,
         projectId,
+        returnTo,
         createdAt: new Date(),
       },
       { merge: true }

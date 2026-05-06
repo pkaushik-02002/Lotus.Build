@@ -111,10 +111,7 @@ import {
   blueprintToText,
   updateBlueprintFromReply,
 } from "@/lib/project-blueprint"
-import { buildkitAgents } from "@/lib/buildkit-agents"
 import { hasGenerationMeta, parseGenerationMeta } from "@/lib/generation-meta"
-import { resolveTerminalAgentPhase } from "@/lib/agent-runtime"
-import { getAgentRunLimitForPlan } from "@/lib/agent-quotas"
 import { normalizeProject } from "@/lib/project-shape"
 
 // Persists across Strict Mode remounts so only one sandbox run can update logs
@@ -1300,26 +1297,12 @@ function ProjectContent() {
   const projectNeedsSupabase = !!project && !project.supabaseProjectRef && (project.suggestsBackend || promptSuggestsSupabaseBackend(project.prompt || ""))
   const showSupabaseChatPrompt = canEdit && projectNeedsSupabase &&
     !suggestBackendDismissed && project.status === "complete" && !isGenerating
-  const creationMode = project?.creationMode || "build"
-  const isBuildTokenBlocked = remainingTokens <= 0 && creationMode !== "agent"
-  const activeAgent = creationMode === "agent"
-    ? buildkitAgents.find((agent) => agent.slug === project?.agentSlug) || buildkitAgents[0]
-    : null
+  const creationMode: ProjectCreationMode = "build"
+  const isBuildTokenBlocked = remainingTokens <= 0
   const planningStatus: PlanningStatus = project?.planningStatus || "draft"
   const planningMessages = Array.isArray(project?.messages) ? project.messages : []
   const shouldShowCreationStudio =
-    !!project &&
-    creationMode === "agent" &&
-    (
-      planningStudioOpenManual ||
-      (
-        project.status === "pending" &&
-        !creationStudioExited &&
-        planningStatus !== "approved" &&
-        planningStatus !== "skipped"
-      )
-    ) &&
-    !isGenerating
+    false
 
   const handleShare = () => {
     setShareVisibility(project?.visibility ?? "private")
@@ -2152,9 +2135,6 @@ function ProjectContent() {
   // - agent mode: only after explicit plan approval/skip
   useEffect(() => {
     if (!project || project.status !== "pending" || isGenerating) return
-    if (project.creationMode === "agent") {
-      if (project.planningStatus !== "approved" && project.planningStatus !== "skipped") return
-    }
     if (pendingGenerationStartedRef.current === projectId) return
     pendingGenerationStartedRef.current = projectId
     setCreationStudioExited(true)
@@ -2325,7 +2305,7 @@ function ProjectContent() {
         completePrevious?: ThinkingStep["phase"][]
       }
     ) => {
-      if (creationMode !== "agent") return
+      return
       setThinkingSteps((prev) => {
         const completeSet = new Set(payload.completePrevious || [])
         const completed = prev.map((step) =>
@@ -2364,16 +2344,7 @@ function ProjectContent() {
     setAgentStatus("Analyzing your request...")
     setReasoningSteps(["Analyzing your request and understanding scope."])
     
-    // For agent mode: Initialize thinking steps with analysis phase
-    if (creationMode === "agent") {
-      updateThinkingPhase("analysis", {
-        title: "Understanding requirements",
-        description: "Analyzing your project brief and gathering context",
-        details: ["Reading project brief", "Identifying core features", "Scoping implementation"],
-      })
-    } else {
-      setThinkingSteps([])
-    }
+    setThinkingSteps([])
 
     // Track if we've auto-selected a file during this generation
     let hasAutoSelectedFile = false
@@ -2386,15 +2357,6 @@ function ProjectContent() {
       setAgentStatus("Generating application structure...")
       setReasoningSteps(prev => [...prev, "Planning application structure and components."])
       
-      // For agent mode: Transition to planning phase
-      if (creationMode === "agent") {
-        updateThinkingPhase("planning", {
-          title: "Designing implementation approach",
-          description: "Mapping components, data flow, and delivery sequence",
-          details: ["Defining components", "Mapping data flow", "Sequencing user journeys"],
-          completePrevious: ["analysis"],
-        })
-      }
 
       // include Firebase ID token so server can authenticate and charge tokens
       const idToken = await user?.getIdToken()
@@ -2409,14 +2371,12 @@ function ProjectContent() {
           idToken: string
           existingFiles: { path: string; content: string }[]
           creationMode?: "build" | "agent"
-          agentSlug?: string
         } = {
           prompt: followUpPrompt,
           model: model || "GPT-4-1 Mini",
           idToken,
           existingFiles: baseFiles.map((file) => ({ path: file.path, content: file.content })),
-          creationMode: project.creationMode || "build",
-          agentSlug: project.creationMode === "agent" ? project.agentSlug : undefined,
+          creationMode: "build",
         }
 
         const followUpResponse = await fetch("/api/generate", {
@@ -2465,14 +2425,12 @@ function ProjectContent() {
         idToken: string
         existingFiles?: { path: string; content: string }[]
         creationMode?: "build" | "agent"
-        agentSlug?: string
         cloneContext?: { title: string; description: string; markdown: string; sourceUrl: string }
       } = {
         prompt: generationPrompt,
         model: model || "GPT-4-1 Mini",
         idToken,
-        creationMode: project.creationMode || "build",
-        agentSlug: project.creationMode === "agent" ? project.agentSlug : undefined,
+        creationMode: "build",
         ...(cloneContext ? { cloneContext } : {}),
       }
       if (project.files && project.files.length > 0) {
@@ -2489,20 +2447,6 @@ function ProjectContent() {
         const errorData = await response.json().catch(() => ({}))
         if (response.status === 402) {
           setTokenLimitModalOpen(true)
-        }
-        if (response.status === 429 && errorData?.code === "AGENT_LIMIT_REACHED") {
-          const fallbackMessage = "Agents limit reached. Switched to Builder mode. Upgrade for more agent runs or wait for reset."
-          await updateDoc(projectRef, {
-            status: "pending",
-            creationMode: "build",
-            agentSlug: deleteField(),
-          })
-          setProject((prev) => (prev ? { ...prev, status: "pending", creationMode: "build", agentSlug: undefined } : prev))
-          toast({
-            title: "Agents limit reached",
-            description: fallbackMessage,
-          })
-          return
         }
         throw new Error(errorData.error || `Generation failed: ${response.status}`)
       }
@@ -2557,16 +2501,6 @@ function ProjectContent() {
             prev.includes("Creating files...") ? prev : [...prev, "Creating files..."]
           )
           
-          // For agent mode: update thinking steps with generation phase
-          if (creationMode === "agent") {
-            updateThinkingPhase("generation", {
-              title: "Generating files",
-              description: `Creating application code (${parsedBlocks.length} files)`,
-              details: [`Writing: ${newFile.path}`],
-              completePrevious: ["planning"],
-            })
-          }
-          
           lastFileCount = parsedBlocks.length
         }
 
@@ -2602,20 +2536,6 @@ function ProjectContent() {
       
       const generationMeta = parseGenerationMeta(fullContent)
       const shouldPersistGenerationMeta = hasGenerationMeta(generationMeta)
-      const shouldPersistAgentRuntime = (project.creationMode || "build") === "agent"
-      const agentRuntime = shouldPersistAgentRuntime
-        ? {
-            mode: "agent" as const,
-            phase: resolveTerminalAgentPhase({
-              suggestedPhase: generationMeta.agentPhase,
-              blockedReason: generationMeta.blockedReason,
-              setupRequirementCount: generationMeta.setupRequirements.length,
-            }),
-            setupRequirements: generationMeta.setupRequirements,
-            ...(generationMeta.blockedReason ? { blockedReason: generationMeta.blockedReason } : {}),
-            updatedAt: new Date().toISOString(),
-          }
-        : undefined
 
       if (usesNvidiaVerificationGate(model)) {
         setAgentStatus("Verifying generated app in sandbox...")
@@ -2694,7 +2614,6 @@ function ProjectContent() {
         files: finalFiles,
         ...(hasDBHint || generationMeta.suggestsBackend ? { suggestsBackend: true } : {}),
         ...(shouldPersistGenerationMeta ? { generationMeta } : {}),
-        ...(agentRuntime ? { agentRuntime } : {}),
         messages: nextMessages,
       })
       setProject((prev) =>
@@ -2705,7 +2624,6 @@ function ProjectContent() {
               files: finalFiles,
               ...(hasDBHint || generationMeta.suggestsBackend ? { suggestsBackend: true } : {}),
               ...(shouldPersistGenerationMeta ? { generationMeta } : {}),
-              ...(agentRuntime ? { agentRuntime } : {}),
               messages: nextMessages,
             }
           : prev
@@ -2831,16 +2749,6 @@ function ProjectContent() {
       setAgentStatus("")
       setReasoningSteps([])
       
-      // For agent mode: mark any active reasoning phases as complete
-      if (creationMode === "agent") {
-        setThinkingSteps((prev) =>
-          prev.map((s) =>
-            (s.phase === "planning" || s.phase === "generation" || s.phase === "validation") && s.status === "active"
-              ? completeThinkingStep(s)
-              : s
-          )
-        )
-      }
     }
   }
 
@@ -3716,16 +3624,6 @@ function ProjectContent() {
   // Calculate tokens limit (never negative remaining)
   const remainingDisplay = userData ? Math.max(0, userData.tokenUsage.remaining ?? 0) : 0
   const tokensLimit = userData ? userData.tokenUsage.used + remainingDisplay : 0
-  const agentRunLimit = userData ? getAgentRunLimitForPlan(userData.planId, userData.agentRunLimit) : 0
-  const agentUsed = userData ? Math.max(0, Number(userData.agentUsage?.used ?? 0)) : 0
-  const agentRemaining = userData
-    ? Math.max(
-        0,
-        Number.isFinite(Number(userData.agentUsage?.remaining))
-          ? Number(userData.agentUsage?.remaining)
-          : agentRunLimit - agentUsed
-      )
-    : 0
 
   if (authLoading || loading) {
     return (
@@ -3796,7 +3694,7 @@ function ProjectContent() {
         blueprint={resolvedBlueprint}
         planningStatus={planningStatus}
         creationMode={creationMode}
-        agentName={activeAgent?.name || null}
+        agentName={null}
         canEdit={canEdit}
         isSubmitting={isPlanningReplyPending}
         getOptionalAuthHeader={getOptionalAuthHeader}
@@ -3842,22 +3740,6 @@ function ProjectContent() {
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-            {creationMode === "agent" ? (
-              <div className="flex items-center gap-2">
-                <span className="hidden rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] text-zinc-600 sm:inline-flex">
-                  Agents {agentRemaining}/{agentRunLimit}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100"
-                  onClick={() => setPlanningStudioOpenManual(true)}
-                >
-                  Plan mode
-                </Button>
-              </div>
-            ) : null}
             <Button type="button" size="sm" variant="outline" className="hidden h-9 rounded-lg border-zinc-300 bg-white px-3 text-zinc-700 hover:bg-zinc-100 lg:inline-flex" onClick={() => setWebsiteSettingsOpen(true)}>
               Website Settings
             </Button>
@@ -4414,7 +4296,7 @@ function ProjectContent() {
                         <div className="flex items-center gap-2">
                           <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#e7dfd2] bg-[#f7f3ec] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-600">
                             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                            {creationMode === "agent" ? "Agent Session" : "Agent Run Live"}
+                            Builder Run Live
                           </div>
                         </div>
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -4437,8 +4319,8 @@ function ProjectContent() {
                       currentGeneratingFile={currentGeneratingFile}
                       isStreaming={isGenerating}
                       agentStatus={agentStatus}
-                      mode={creationMode === "agent" ? "agent" : "build"}
-                      showThinking={creationMode === "agent"}
+                      mode="build"
+                      showThinking={false}
                     />
                   </div>
                 )}

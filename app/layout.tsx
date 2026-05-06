@@ -3,7 +3,6 @@ import type { Metadata } from "next"
 import { Manrope } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { AuthProvider } from "@/contexts/auth-context"
-import "@21st-sdk/react/styles.css"
 import "./globals.css"
 
 const manrope = Manrope({
@@ -13,7 +12,7 @@ const manrope = Manrope({
 
 function normalizeSiteUrl(raw?: string): string {
   const value = (raw || "").trim()
-  if (!value) return "https://buildkit.app"
+  if (!value) return "https://lotus-build.app"
   if (/^https?:\/\//i.test(value)) return value
   return `https://${value}`
 }

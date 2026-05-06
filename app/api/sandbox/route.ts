@@ -6,6 +6,7 @@ import crypto from "crypto"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 300
 
 type InputFile = { path: string; content: string }
 
@@ -22,6 +23,7 @@ interface ReadinessCheckResult {
   ready: boolean
   reason?: string
   logs?: string
+  localReady?: boolean
 }
 
 function ndjson(
@@ -273,6 +275,13 @@ function parsePackageJsonText(txt: string): any {
 
 const SANDBOX_DEPENDENCY_VERSION_OVERRIDES: Record<string, string> = {
   "react-icons": "^5.0.0",
+  "tailwindcss": "^3.4.17",
+  "postcss": "^8.4.49",
+  "autoprefixer": "^10.4.20",
+  "vite": "^5.4.11",
+  "@vitejs/plugin-react": "^4.3.4",
+  "lucide-react": "^0.577.0",
+  "framer-motion": "^12.36.0",
 }
 
 async function normalizePackageJsonDependenciesForPreview(sandbox: Sandbox): Promise<any> {
@@ -283,6 +292,75 @@ async function normalizePackageJsonDependenciesForPreview(sandbox: Sandbox): Pro
   if (!pkg) return null
 
   let changed = false
+  const deps = pkg.dependencies && typeof pkg.dependencies === "object" ? pkg.dependencies : {}
+  const devDeps = pkg.devDependencies && typeof pkg.devDependencies === "object" ? pkg.devDependencies : {}
+  const allDeps = { ...deps, ...devDeps }
+  const looksLikeViteApp = Boolean(
+    await readFileMaybe(sandbox, `${PROJECT_DIR}/index.html`) &&
+    (
+      await readFileMaybe(sandbox, `${PROJECT_DIR}/src/main.tsx`) ||
+      await readFileMaybe(sandbox, `${PROJECT_DIR}/src/main.jsx`)
+    )
+  )
+
+  if (!allDeps.vite && !allDeps.next && looksLikeViteApp) {
+    pkg.devDependencies = {
+      ...devDeps,
+      vite: SANDBOX_DEPENDENCY_VERSION_OVERRIDES.vite,
+      "@vitejs/plugin-react": SANDBOX_DEPENDENCY_VERSION_OVERRIDES["@vitejs/plugin-react"],
+    }
+    changed = true
+  }
+
+  if (allDeps.vite && !devDeps["@vitejs/plugin-react"] && !deps["@vitejs/plugin-react"]) {
+    pkg.devDependencies = { ...devDeps, "@vitejs/plugin-react": SANDBOX_DEPENDENCY_VERSION_OVERRIDES["@vitejs/plugin-react"] }
+    changed = true
+  }
+
+  if (allDeps.tailwindcss) {
+    pkg.devDependencies = {
+      ...(pkg.devDependencies && typeof pkg.devDependencies === "object" ? pkg.devDependencies : {}),
+      tailwindcss: SANDBOX_DEPENDENCY_VERSION_OVERRIDES.tailwindcss,
+      postcss: SANDBOX_DEPENDENCY_VERSION_OVERRIDES.postcss,
+      autoprefixer: SANDBOX_DEPENDENCY_VERSION_OVERRIDES.autoprefixer,
+    }
+    changed = true
+  }
+
+  const hasVite = Boolean(allDeps.vite || pkg.devDependencies?.vite || pkg.dependencies?.vite || looksLikeViteApp)
+  const hasNext = Boolean(allDeps.next || pkg.devDependencies?.next || pkg.dependencies?.next)
+  if (hasVite || hasNext) {
+    const scripts = pkg.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {}
+    if (typeof scripts.dev !== "string" || !scripts.dev.trim()) {
+      pkg.scripts = {
+        ...scripts,
+        dev: hasNext ? "next dev" : "vite",
+      }
+      changed = true
+    }
+  }
+
+  try {
+    const importScan = await cmd(
+      sandbox,
+      `grep -R -E "from ['\\\"](lucide-react|framer-motion)['\\\"]|from\\(['\\\"](lucide-react|framer-motion)['\\\"]\\)" ${PROJECT_DIR}/src ${PROJECT_DIR}/index.html 2>/dev/null || true`,
+      10000
+    )
+    const importedPackages = importScan.stdout || ""
+    for (const packageName of ["lucide-react", "framer-motion"]) {
+      if (
+        importedPackages.includes(packageName) &&
+        !pkg.dependencies?.[packageName] &&
+        !pkg.devDependencies?.[packageName]
+      ) {
+        pkg.dependencies = {
+          ...(pkg.dependencies && typeof pkg.dependencies === "object" ? pkg.dependencies : {}),
+          [packageName]: SANDBOX_DEPENDENCY_VERSION_OVERRIDES[packageName],
+        }
+        changed = true
+      }
+    }
+  } catch {}
 
   for (const field of ["dependencies", "devDependencies"] as const) {
     const deps = pkg?.[field]
@@ -433,7 +511,7 @@ function buildDevStartScript(framework: "next" | "vite" | "unknown"): string {
     // Unknown - try Vite first, then Next.js, then generic
     lines.push(
       `echo "START: Unknown framework, attempting Vite first..." >> "${DEV_LOG_PATH}"`,
-      `(nohup npx vite --host 0.0.0.0 --port ${DEV_PORT} --strictPort > "${DEV_LOG_PATH}" 2>&1 &)`,
+      `nohup npx vite --host 0.0.0.0 --port ${DEV_PORT} --strictPort > "${DEV_LOG_PATH}" 2>&1 &`,
       "PID=$!",
       "sleep 1",
       `if kill -0 $PID 2>/dev/null; then`,
@@ -494,7 +572,7 @@ async function checkServerReady(
   console.log(`[checkServerReady] framework=${framework}, logReady=${logReady}, portReady=${portReady}, localReady=${localReady}`)
 
   if (localReady) {
-    return { ready: true, reason: "local-http-responding", logs: devLog }
+    return { ready: true, reason: "local-http-responding", logs: devLog, localReady: true }
   }
   
   // Try URL check
@@ -502,7 +580,7 @@ async function checkServerReady(
   
   // Do not trust URL reachability alone; require at least one server signal.
   if (urlCheck.responding && (portReady || logReady)) {
-    return { ready: true, reason: "url-responding-with-signal", logs: devLog }
+    return { ready: true, reason: "url-responding-with-signal", logs: devLog, localReady }
   }
   
   // For Next.js: sometimes needs more time
@@ -1312,16 +1390,24 @@ export async function POST(req: Request) {
           }
 
           if (readyCheck.ready) {
-            // Require a successful URL check (with delay) to avoid "Closed Port" in iframe
-            await new Promise(r => setTimeout(r, 800))
-            const recheck = await previewUrlResponding(sandbox, DEV_PORT)
-            if (!recheck.responding) {
+            const url = `https://${sandbox.getHost(DEV_PORT)}`
+            let publicUrlReady = false
+
+            for (let attempt = 0; attempt < 8; attempt++) {
+              await new Promise(r => setTimeout(r, attempt === 0 ? 800 : 1200))
+              const recheck = await previewUrlResponding(sandbox, DEV_PORT)
+              if (recheck.responding) {
+                publicUrlReady = true
+                break
+              }
+            }
+
+            if (!publicUrlReady && !readyCheck.localReady) {
               await new Promise(r => setTimeout(r, LOG_POLL_INTERVAL_MS))
               continue
             }
 
-            console.log(`[sandbox] Server ready! Reason: ${readyCheck.reason}`)
-            const url = `https://${sandbox.getHost(DEV_PORT)}`
+            console.log(`[sandbox] Server ready! Reason: ${readyCheck.reason}, publicUrlReady=${publicUrlReady}`)
             
             // Get final logs
             const finalLogs = await readTail(sandbox, DEV_LOG_PATH, 300)
@@ -1333,7 +1419,9 @@ export async function POST(req: Request) {
             }
 
             // Add warning if it took a long time
-            if (i > 60) {
+            if (!publicUrlReady) {
+              warning = "Preview server is running; public tunnel is still warming up"
+            } else if (i > 60) {
               warning = "Preview is slow to start — you may want to simplify the project"
             }
 

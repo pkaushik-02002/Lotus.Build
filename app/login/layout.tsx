@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://buildkit.app"
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://lotus-build.app"
 
 export const metadata: Metadata = {
   title: "Sign In",
