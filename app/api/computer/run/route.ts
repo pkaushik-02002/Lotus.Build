@@ -1023,16 +1023,36 @@ ${params.prompt}
 
 ${contextSections.join("\n\n")}
 
-Use the context to make better product, layout, and content decisions. Preserve the original user request as the highest priority and do not invent unrelated scope.
+DESIGN SPECIFICATION — treat the web context above as a hard design brief, not optional context:
+- Extract the exact color palette, fonts, spacing density, and layout structure from the inspected pages. Reproduce them via CSS custom properties. Do not substitute generic Tailwind defaults.
+- If style hints include specific hex colors or font names, use them directly.
+- Match the structural density of the reference exactly. If it is dense, do not produce a sparse page. If it is minimal, do not add sections the reference does not have.
+- Copy must be domain-specific and written for the actual business. Zero placeholder text, zero "Lorem ipsum", zero "Your tagline here".
+- If multiple pages were inspected, use the strongest consistent signals across all of them.
 
-Design quality requirements:
-- Do not produce generic AI-template pages: no default hero/features/pricing/docs shell unless the user specifically asked for that structure.
-- Avoid the common purple/indigo AI SaaS palette. Do not use purple as the primary accent unless the user explicitly asks for purple or the referenced brand uses it.
-- Build a domain-specific palette, copy, and layout. Prefer premium neutral, editorial, product-led, or industry-appropriate visual systems over neon gradients.
-- The first viewport must make the product/business feel specific and inspectable, not like a placeholder "AI website builder" demo.
-- Use any web context above as inspiration for concrete layout, typography, copy density, imagery, and interaction choices.
+FRONTEND DESIGN SKILL — apply before writing any code:
+- Commit to a bold aesthetic direction suited to the domain.
+- Pair a distinctive display font with a body font via Google Fonts. Never default to Inter, Roboto, or system-ui.
+- Build a CSS custom property palette. One dominant color with one sharp accent.
+- Purple, violet, indigo gradients are banned as defaults. Use them only if the reference or user explicitly calls for them.
+- Every interactive element needs a hover state and transition.
+- Use Framer Motion for entrance animations and stagger effects.
+- Create atmosphere with gradient meshes, textures, or geometric patterns appropriate to the domain.
+- If no web evidence was collected, apply domain intelligence:
+    food/hospitality → warm palette, serif, appetite-triggering copy
+    SaaS/tech → clean density, muted blue or graphite, data-forward
+    creative/agency → bold type, asymmetric, portfolio-style
+    health/wellness → calming palette, trust signals, clean minimal
+    finance/legal → authoritative, conservative, trust-first
+    e-commerce → product-first, conversion-optimized, social proof
 
-If the request is to clone or recreate a website, build a frontend-only recreation with maintainable React/Tailwind, responsive layout, and local-only interactions. Do not clone backend behavior, authentication, payments, private data, or remote scripts unless the user explicitly asks for backend work later.`
+ABSOLUTE BANS:
+- Default dark page, purple accent, Features/Pricing/Docs nav, generic hero, decorative code preview card.
+- Inter or Space Grotesk as the only font.
+- Flat solid backgrounds with no atmosphere.
+- Placeholder copy anywhere in the output.
+
+If the request is to clone or recreate a website, build a frontend-only recreation with maintainable React/Tailwind, responsive layout, and local-only interactions. Do not clone backend behavior, authentication, payments, private data, or remote scripts unless explicitly asked.`
 }
 
 export async function POST(req: Request) {
