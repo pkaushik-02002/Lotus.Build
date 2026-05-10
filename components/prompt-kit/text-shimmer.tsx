@@ -13,7 +13,7 @@ interface TextShimmerProps {
 export function TextShimmer({
   children,
   className,
-  duration = 2,
+  duration = 3.2,
 }: TextShimmerProps) {
   return (
     <span

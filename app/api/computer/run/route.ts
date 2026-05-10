@@ -6,6 +6,7 @@ import type { DocumentReference } from "firebase-admin/firestore"
 import { adminDb } from "@/lib/firebase-admin"
 import { requireUserUid } from "@/lib/server-auth"
 import type { ComputerTimelineEvent } from "@/lib/computer-agent/types"
+import { createComputerAgentMessage } from "@/lib/computer-agent/agent-config"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -14,8 +15,6 @@ export const maxDuration = 300
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 })
-
-const CLAUDE_COMPUTER_MODEL = "claude-sonnet-4-5-20250929"
 
 const runRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
@@ -123,7 +122,7 @@ async function appendEvent(
     }
   }
 
-  timeline.push(sanitizedEvent as ComputerTimelineEvent)
+  timeline.push(sanitizedEvent as unknown as ComputerTimelineEvent)
 
   await docRef.update({
     timeline,
@@ -412,6 +411,20 @@ function inferWebIntent(prompt: string): AgentWebIntent {
   return "unknown"
 }
 
+function shouldResearchDesignInspiration(prompt: string, intent: AgentWebIntent) {
+  if (intent === "edit") return false
+  const normalized = prompt.toLowerCase()
+  return (
+    intent === "build" ||
+    /\b(website|site|landing page|homepage|web app|saas|startup|brand|portfolio|agency|restaurant|shop|store)\b/.test(normalized)
+  )
+}
+
+function buildDesignInspirationQuery(prompt: string) {
+  const compactPrompt = prompt.replace(/\s+/g, " ").trim().slice(0, 180)
+  return `premium modern website design inspiration ${compactPrompt}`
+}
+
 function normalizeAgentWebAction(value: unknown): AgentWebAction | null {
   const action = typeof value === "string" ? value.trim() : ""
   const actions: AgentWebAction[] = [
@@ -663,7 +676,6 @@ function parseFirecrawlExecuteResult(payload: Record<string, unknown>, sourceUrl
 async function runFirecrawlBrowserInspection(params: {
   targetUrl: string
   apiKey: string
-  onLiveUrl: (inspection: RemoteBrowserInspection) => Promise<void>
   signal: AbortSignal
   intent: AgentWebIntent
 }): Promise<RemoteBrowserInspection> {
@@ -698,20 +710,6 @@ async function runFirecrawlBrowserInspection(params: {
   if (!sessionId || !liveUrl) {
     throw new Error("Firecrawl browser response did not include a live view URL")
   }
-
-  await params.onLiveUrl({
-    summary: "",
-    liveUrl,
-    sessionId,
-    baseUrl: getOrigin(liveUrl),
-    pageTitle: params.targetUrl,
-    evidence: {
-      provider: "firecrawl",
-      sourceUrl: params.targetUrl,
-      intent: params.intent,
-      title: params.targetUrl,
-    },
-  })
 
   const executeCode = `
 await page.goto(${JSON.stringify(params.targetUrl)}, { waitUntil: "domcontentloaded", timeout: 45000 });
@@ -882,24 +880,27 @@ async function runFirecrawlScrapeFallback(params: {
 function buildHeuristicWebPlan(prompt: string): AgentWebPlan {
   const urls = extractUrls(prompt)
   const intent = inferWebIntent(prompt)
-  const needsSearch = urls.length === 0 && intent === "research"
+  const needsDesignInspiration = urls.length === 0 && shouldResearchDesignInspiration(prompt, intent)
+  const needsSearch = urls.length === 0 && (intent === "research" || needsDesignInspiration)
   const shouldInspect = urls.length > 0
   const actions: AgentWebAction[] = []
 
   if (needsSearch) actions.push("search_web")
-  if (shouldInspect) actions.push("inspect_page", "collect_dom")
+  if (shouldInspect || needsDesignInspiration) actions.push("inspect_page", "collect_dom")
   if (!actions.length) actions.push("skip")
   actions.push("generate_frontend")
 
   return {
     actions,
     targetUrls: urls,
-    searchQuery: needsSearch ? prompt : "",
+    searchQuery: needsDesignInspiration ? buildDesignInspirationQuery(prompt) : needsSearch ? prompt : "",
     intent,
     reason: urls.length
       ? "The prompt includes a URL, so Firecrawl should inspect it before generation."
       : needsSearch
-        ? "The prompt asks for external research."
+        ? needsDesignInspiration
+          ? "The prompt would benefit from design inspiration before generation."
+          : "The prompt asks for external research."
         : "No specific web context is required.",
   }
 }
@@ -929,6 +930,11 @@ function parseAgentWebPlan(text: string, prompt: string): AgentWebPlan {
   if (mergedTargetUrls.length && !nextActions.includes("inspect_page")) {
     nextActions.unshift("inspect_page", "collect_dom")
   }
+  if (searchQuery && shouldResearchDesignInspiration(prompt, intent)) {
+    if (!nextActions.includes("search_web")) nextActions.unshift("search_web")
+    if (!nextActions.includes("inspect_page")) nextActions.push("inspect_page")
+    if (!nextActions.includes("collect_dom")) nextActions.push("collect_dom")
+  }
   if (!nextActions.includes("generate_frontend")) nextActions.push("generate_frontend")
 
   return {
@@ -943,8 +949,7 @@ function parseAgentWebPlan(text: string, prompt: string): AgentWebPlan {
 async function createAgentWebPlan(prompt: string, planText: string): Promise<AgentWebPlan> {
   const heuristic = buildHeuristicWebPlan(prompt)
   try {
-    const response = await anthropic.messages.create({
-      model: CLAUDE_COMPUTER_MODEL,
+    const response = await createComputerAgentMessage(anthropic, {
       max_tokens: 250,
       temperature: 0,
       system: `
@@ -963,7 +968,8 @@ Rules:
 - Detected URLs strongly favor inspect_page and collect_dom.
 - Clone/reference URLs require page inspection.
 - Research/latest/current/competitor requests may use search_web.
-- Vague build prompts without URLs should usually skip web tools.
+- New website/app builds without URLs should usually use search_web, then inspect_page and collect_dom for design inspiration before generation.
+- Simple edits to an existing project can skip web tools.
 - TinyFish is not a browser; it is only fallback scrape context and is not part of this plan.
 
 Format:
@@ -981,7 +987,7 @@ Format:
           content: `User request:\n${prompt}\n\nPlanning context:\n${planText || "none"}\n\nHeuristic default:\n${JSON.stringify(heuristic)}`,
         },
       ],
-    })
+    }, { enableMcp: false })
 
     return parseAgentWebPlan(extractTextFromAnthropicContent(response.content), prompt)
   } catch (err) {
@@ -1018,6 +1024,13 @@ ${params.prompt}
 ${contextSections.join("\n\n")}
 
 Use the context to make better product, layout, and content decisions. Preserve the original user request as the highest priority and do not invent unrelated scope.
+
+Design quality requirements:
+- Do not produce generic AI-template pages: no default hero/features/pricing/docs shell unless the user specifically asked for that structure.
+- Avoid the common purple/indigo AI SaaS palette. Do not use purple as the primary accent unless the user explicitly asks for purple or the referenced brand uses it.
+- Build a domain-specific palette, copy, and layout. Prefer premium neutral, editorial, product-led, or industry-appropriate visual systems over neon gradients.
+- The first viewport must make the product/business feel specific and inspectable, not like a placeholder "AI website builder" demo.
+- Use any web context above as inspiration for concrete layout, typography, copy density, imagery, and interaction choices.
 
 If the request is to clone or recreate a website, build a frontend-only recreation with maintainable React/Tailwind, responsive layout, and local-only interactions. Do not clone backend behavior, authentication, payments, private data, or remote scripts unless the user explicitly asks for backend work later.`
 }
@@ -1113,8 +1126,7 @@ export async function POST(req: Request) {
       createdAt: new Date().toISOString(),
     })
 
-    const understandingNarration = await anthropic.messages.create({
-      model: CLAUDE_COMPUTER_MODEL,
+    const understandingNarration = await createComputerAgentMessage(anthropic, {
       max_tokens: 160,
       temperature: 0.3,
       system: "You are an autonomous agent narrating your reasoning. First person. 2-3 sentences. Plain text. No markdown.",
@@ -1146,8 +1158,7 @@ export async function POST(req: Request) {
     }
 
     try {
-      const response = await anthropic.messages.create({
-        model: CLAUDE_COMPUTER_MODEL,
+      const response = await createComputerAgentMessage(anthropic, {
         max_tokens: 500,
         temperature: 0.2,
         system: `
@@ -1271,8 +1282,7 @@ Rules:
           createdAt: new Date().toISOString(),
         })
 
-        const researchNarration = await anthropic.messages.create({
-          model: CLAUDE_COMPUTER_MODEL,
+        const researchNarration = await createComputerAgentMessage(anthropic, {
           max_tokens: 160,
           temperature: 0.3,
           system: "You are an autonomous agent narrating your reasoning. First person. 2-3 sentences. Plain text. No markdown.",
@@ -1340,25 +1350,6 @@ Rules:
 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 75000)
-      const appendBrowserLiveEvent = async (inspection: RemoteBrowserInspection) => {
-        await appendRunEvent({
-          id: crypto.randomUUID(),
-          title: "Browser live",
-          description: "Firecrawl remote browser is available.",
-          status: "complete",
-          kind: "browser",
-          createdAt: new Date().toISOString(),
-          metadata: {
-            targetUrl,
-            browserLiveUrl: inspection.liveUrl,
-            browserSessionId: inspection.sessionId || null,
-            browserBaseUrl: inspection.baseUrl || null,
-            browserProvider: "firecrawl",
-            pageTitle: inspection.pageTitle || targetUrl,
-          },
-        })
-      }
-
       try {
         if (!firecrawlApiKey) throw new Error("Missing FIRECRAWL_API_KEY")
         const inspection = await runFirecrawlBrowserInspection({
@@ -1366,7 +1357,6 @@ Rules:
           apiKey: firecrawlApiKey,
           signal: controller.signal,
           intent: webPlan.intent,
-          onLiveUrl: appendBrowserLiveEvent,
         })
 
         webEvidence.push(inspection.evidence)
@@ -1388,8 +1378,7 @@ Rules:
           },
         })
 
-        const browserNarration = await anthropic.messages.create({
-          model: CLAUDE_COMPUTER_MODEL,
+        const browserNarration = await createComputerAgentMessage(anthropic, {
           max_tokens: 160,
           temperature: 0.3,
           system: "You are an autonomous agent narrating your reasoning. First person. 2-3 sentences. Plain text. No markdown.",
@@ -1510,8 +1499,7 @@ Rules:
     let generationDecision: GenerationDecision = { shouldGenerate: true, reason: "builder_run" }
 
     try {
-      const generationDecisionRes = await anthropic.messages.create({
-        model: CLAUDE_COMPUTER_MODEL,
+      const generationDecisionRes = await createComputerAgentMessage(anthropic, {
         temperature: 0,
         max_tokens: 120,
         system: `
@@ -1544,7 +1532,7 @@ Browser:
 ${formatWebEvidenceList(usableWebEvidence.filter((evidence) => evidence.sourceUrl.startsWith("http"))) || "none"}`,
           },
         ],
-      })
+      }, { enableMcp: false })
 
       generationDecision = parseGenerationDecision(
         extractTextFromAnthropicContent(generationDecisionRes.content)
@@ -1569,8 +1557,7 @@ ${formatWebEvidenceList(usableWebEvidence.filter((evidence) => evidence.sourceUr
       createdAt: new Date().toISOString(),
     })
 
-    const buildNarration = await anthropic.messages.create({
-      model: CLAUDE_COMPUTER_MODEL,
+    const buildNarration = await createComputerAgentMessage(anthropic, {
       max_tokens: 160,
       temperature: 0.3,
       system: "You are an autonomous agent narrating your reasoning. First person. 2-3 sentences. Plain text. No markdown.",
@@ -1619,7 +1606,7 @@ ${formatWebEvidenceList(usableWebEvidence.filter((evidence) => evidence.sourceUr
         id: generatingEventId,
         title: "Generating code",
         description: "Starting build process...",
-        status: "complete",
+        status: "running",
         kind: "code",
         createdAt: new Date().toISOString(),
       })
@@ -1661,6 +1648,10 @@ ${formatWebEvidenceList(usableWebEvidence.filter((evidence) => evidence.sourceUr
             status: "running",
             kind: "code",
             createdAt: new Date().toISOString(),
+            metadata: {
+              filePath: path,
+              editVariant: projectFiles.length > 0 ? "edit" : "write",
+            },
           })
         })
 
@@ -1690,7 +1681,10 @@ ${formatWebEvidenceList(usableWebEvidence.filter((evidence) => evidence.sourceUr
             const t = Array.isArray(d.timeline) ? [...d.timeline] : []
             let changed = false
             for (let i = 0; i < t.length; i++) {
-              if (t[i].status === "running" && t[i].title.startsWith("Generating ")) {
+              if (
+                t[i].status === "running" &&
+                (t[i].id === generatingEventId || t[i].title.startsWith("Generating "))
+              ) {
                 t[i] = { ...t[i], status: "complete" }
                 changed = true
               }
@@ -1776,12 +1770,27 @@ ${formatWebEvidenceList(usableWebEvidence.filter((evidence) => evidence.sourceUr
       }
 
       if (generationFailed) {
+        try {
+          await adminDb.runTransaction(async (tx) => {
+            const s = await tx.get(docRef)
+            const d = s.data() || {}
+            if (d.currentRunId !== runId) return
+            const t = Array.isArray(d.timeline) ? [...d.timeline] : []
+            const index = t.findIndex((event) => event.id === generatingEventId)
+            if (index !== -1 && t[index].status === "running") {
+              t[index] = { ...t[index], status: "error" }
+              tx.update(docRef, { timeline: t, updatedAt: new Date() })
+            }
+          })
+        } catch (err) {
+          console.error("Failed to mark generation event failed:", err)
+        }
+
         // — Classify failure —
         let classification: FailureClassification = { category: "unknown", reason: "default" }
 
         try {
-          const failureRes = await anthropic.messages.create({
-            model: CLAUDE_COMPUTER_MODEL,
+          const failureRes = await createComputerAgentMessage(anthropic, {
             temperature: 0,
             max_tokens: 120,
             system: `
@@ -1810,7 +1819,7 @@ Format:
 Generation result: ${JSON.stringify(genData)}`,
               },
             ],
-          })
+          }, { enableMcp: false })
 
           classification = parseFailureClassification(
             extractTextFromAnthropicContent(failureRes.content)
@@ -2015,6 +2024,25 @@ Instructions:
             } else if (event?.type === "log") {
               const chunk = typeof event.data === "string" ? event.data.trim() : ""
               if (chunk) sandboxLogs = (sandboxLogs + "\n" + chunk).slice(-2000)
+            } else if (event?.type === "step" && typeof event.command === "string") {
+              const command = event.command
+              const commandOutput = typeof event.output === "string" ? event.output.slice(-2000) : undefined
+              const stepName = typeof event.step === "string" ? event.step : "command"
+              const status = event.status === "success" ? "complete" : event.status === "error" ? "error" : "running"
+
+              await appendRunEvent({
+                id: crypto.randomUUID(),
+                title: status === "running" ? "Running command" : "Command completed",
+                description: typeof event.message === "string" ? event.message : undefined,
+                status,
+                kind: "sandbox",
+                createdAt: new Date().toISOString(),
+                metadata: {
+                  command,
+                  commandOutput: commandOutput || null,
+                  commandStep: stepName,
+                },
+              })
             }
           } catch {}
         }
@@ -2048,8 +2076,7 @@ Instructions:
         let shouldFix = false
 
         try {
-          const runtimeDecisionRes = await anthropic.messages.create({
-            model: CLAUDE_COMPUTER_MODEL,
+          const runtimeDecisionRes = await createComputerAgentMessage(anthropic, {
             temperature: 0,
             max_tokens: 120,
             system: `
@@ -2069,7 +2096,7 @@ Format:
                 content: `Runtime error:\n${sandboxErrors || sandboxLogs}\n\nOriginal prompt:\n${prompt}`,
               },
             ],
-          })
+          }, { enableMcp: false })
 
           const runtimeDecisionText = extractTextFromAnthropicContent(runtimeDecisionRes.content)
           const parsed = extractJson(runtimeDecisionText)

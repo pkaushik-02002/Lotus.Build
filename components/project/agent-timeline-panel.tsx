@@ -117,7 +117,7 @@ function AgentRunHeader({
         {activeStep ? (
           <TextShimmer 
             className="bg-gradient-to-r from-zinc-400 via-zinc-950 to-zinc-400 text-[15px] font-semibold leading-snug tracking-tight"
-            duration={2}
+            duration={3.2}
           >
             {activeStep.title}
           </TextShimmer>
@@ -190,7 +190,7 @@ function TimelineStep({
           {isActive ? (
             <TextShimmer 
               className="bg-gradient-to-r from-zinc-400 via-zinc-950 to-zinc-400 text-[14px] font-medium" 
-              duration={2}
+              duration={3.2}
             >
               {step.title}
             </TextShimmer>

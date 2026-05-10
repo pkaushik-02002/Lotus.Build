@@ -46,14 +46,22 @@ export async function GET(
     }
 
     const json = (await res.json()) as any
+    const projectName = typeof data?.vercelProjectName === "string" && data.vercelProjectName.trim()
+      ? data.vercelProjectName.trim()
+      : ""
+    const stableSiteUrl = typeof data?.vercelSiteUrl === "string" && data.vercelSiteUrl.trim()
+      ? data.vercelSiteUrl.trim()
+      : projectName
+        ? `https://${projectName}.vercel.app`
+        : null
 
     return NextResponse.json({
       id: json?.id || deploymentId,
       state: json?.readyState || json?.status || null,
       deployUrl: json?.url ? `https://${json.url}` : null,
-      siteUrl: Array.isArray(json?.alias) && json.alias[0]
+      siteUrl: stableSiteUrl || (Array.isArray(json?.alias) && json.alias[0]
         ? (json.alias[0].startsWith("http") ? json.alias[0] : `https://${json.alias[0]}`)
-        : (json?.url ? `https://${json.url}` : null),
+        : (json?.url ? `https://${json.url}` : null)),
       raw: json,
     })
   } catch (err: any) {

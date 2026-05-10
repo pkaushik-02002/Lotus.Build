@@ -1492,7 +1492,6 @@ function ProjectContent() {
         },
         body: JSON.stringify({
           projectId,
-          siteId: deployLinks?.siteId || null,
           siteName: netlifySiteName || (project?.name ? project.name : ""),
         }),
       })
@@ -1561,7 +1560,7 @@ function ProjectContent() {
       setIsDeploying(false)
       refreshNetlifyStatus()
     }
-  }, [deployLinks?.siteId, getAuthHeader, netlifySiteName, project?.name, projectId, refreshNetlifyStatus, toFriendlyDeployError, netlifyConnected, handleConnectNetlify])
+  }, [getAuthHeader, netlifySiteName, project?.name, projectId, refreshNetlifyStatus, toFriendlyDeployError, netlifyConnected, handleConnectNetlify])
 
   const handleSaveVercelToken = useCallback(async () => {
     if (!projectId || !vercelTokenInput.trim()) return
@@ -1688,22 +1687,33 @@ function ProjectContent() {
 
   useEffect(() => {
     if (!project) return
-    const p = project as any
-    if (!deployLinks && (p?.netlifySiteUrl || p?.netlifyDeployUrl || p?.netlifyAdminUrl || p?.netlifySiteId || p?.netlifyDeployId)) {
+    if (
+      (project.netlifySiteUrl || project.netlifyDeployUrl || project.netlifyAdminUrl || project.netlifySiteId || project.netlifyDeployId) &&
+      (!deployLinks ||
+        deployLinks.siteUrl !== (project.netlifySiteUrl || null) ||
+        deployLinks.deployId !== (project.netlifyDeployId || null) ||
+        deployLinks.siteId !== (project.netlifySiteId || null))
+    ) {
       setDeployLinks({
-        siteUrl: p?.netlifySiteUrl || null,
-        deployUrl: p?.netlifyDeployUrl || null,
-        adminUrl: p?.netlifyAdminUrl || null,
-        siteId: p?.netlifySiteId || null,
-        deployId: p?.netlifyDeployId || null,
+        siteUrl: project.netlifySiteUrl || null,
+        deployUrl: project.netlifyDeployUrl || null,
+        adminUrl: project.netlifyAdminUrl || null,
+        siteId: project.netlifySiteId || null,
+        deployId: project.netlifyDeployId || null,
       })
     }
-    if (!vercelDeployLinks && (p?.vercelDeployUrl || p?.vercelDeploymentId)) {
+    const vercelSiteUrl = project.vercelSiteUrl || project.vercelDeployUrl || null
+    if (
+      (vercelSiteUrl || project.vercelDeploymentId) &&
+      (!vercelDeployLinks ||
+        vercelDeployLinks.siteUrl !== vercelSiteUrl ||
+        vercelDeployLinks.deploymentId !== (project.vercelDeploymentId || null))
+    ) {
       setVercelDeployLinks({
-        siteUrl: p?.vercelDeployUrl || null,
-        deployUrl: p?.vercelDeployUrl || null,
-        adminUrl: p?.vercelDeploymentId ? `https://vercel.com/dashboard/deployments/${p.vercelDeploymentId}` : null,
-        deploymentId: p?.vercelDeploymentId || null,
+        siteUrl: vercelSiteUrl,
+        deployUrl: project.vercelDeployUrl || null,
+        adminUrl: project.vercelDeploymentId ? `https://vercel.com/dashboard/deployments/${project.vercelDeploymentId}` : null,
+        deploymentId: project.vercelDeploymentId || null,
       })
     }
   }, [project, deployLinks, vercelDeployLinks])
@@ -3646,6 +3656,19 @@ function ProjectContent() {
   
   // Prefer explicit project name; fall back to prompt-derived title
   const displayProjectName = project?.name || project?.prompt?.split(' ').slice(0, 3).join(' ') || 'Untitled Project'
+  const netlifyDeployment = {
+    siteUrl: project?.netlifySiteUrl || deployLinks?.siteUrl || null,
+    deployUrl: project?.netlifyDeployUrl || deployLinks?.deployUrl || null,
+    adminUrl: project?.netlifyAdminUrl || deployLinks?.adminUrl || null,
+    siteId: project?.netlifySiteId || deployLinks?.siteId || null,
+    deployId: project?.netlifyDeployId || deployLinks?.deployId || null,
+  }
+  const vercelDeployment = {
+    siteUrl: project?.vercelSiteUrl || vercelDeployLinks?.siteUrl || project?.vercelDeployUrl || null,
+    deployUrl: project?.vercelDeployUrl || vercelDeployLinks?.deployUrl || null,
+    adminUrl: vercelDeployLinks?.adminUrl || (project?.vercelDeploymentId ? `https://vercel.com/dashboard/deployments/${project.vercelDeploymentId}` : null),
+    deploymentId: project?.vercelDeploymentId || vercelDeployLinks?.deploymentId || null,
+  }
 
   // Calculate tokens limit (never negative remaining)
   const remainingDisplay = userData ? Math.max(0, userData.tokenUsage.remaining ?? 0) : 0
@@ -4700,18 +4723,18 @@ function ProjectContent() {
                   </div>
                 </div>
                 <div className="space-y-4 px-4 py-4">
-                  {deployLinks?.siteUrl ? (
+                  {netlifyDeployment.siteUrl ? (
                     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Live URL</p>
                       <a
-                        href={deployLinks.siteUrl}
+                        href={netlifyDeployment.siteUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3 text-left shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50"
                       >
                         <div className="min-w-0">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Open live site</p>
-                          <p className="mt-1 break-all text-sm font-semibold text-zinc-900">{deployLinks.siteUrl}</p>
+                          <p className="mt-1 break-all text-sm font-semibold text-zinc-900">{netlifyDeployment.siteUrl}</p>
                         </div>
                         <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
                       </a>
@@ -4722,7 +4745,7 @@ function ProjectContent() {
                           className="min-h-[40px] flex-1 rounded-xl border-zinc-300 text-zinc-700"
                           onClick={async () => {
                             try {
-                              await navigator.clipboard.writeText(deployLinks.siteUrl || "")
+                              await navigator.clipboard.writeText(netlifyDeployment.siteUrl || "")
                               toast({ title: "Copied", description: "Live URL copied to clipboard." })
                             } catch {
                               toast({ title: "Copy failed", description: "Could not copy live URL.", variant: "destructive" })
@@ -4737,9 +4760,9 @@ function ProjectContent() {
                           onClick={async () => {
                             try {
                               if (navigator.share) {
-                                await navigator.share({ title: displayProjectName, url: deployLinks.siteUrl || "" })
+                                await navigator.share({ title: displayProjectName, url: netlifyDeployment.siteUrl || "" })
                               } else {
-                                await navigator.clipboard.writeText(deployLinks.siteUrl || "")
+                                await navigator.clipboard.writeText(netlifyDeployment.siteUrl || "")
                                 toast({ title: "Copied", description: "Share is unavailable here, so the URL was copied instead." })
                               }
                             } catch {
@@ -4764,7 +4787,7 @@ function ProjectContent() {
                       ? "Publishing..."
                       : !netlifyConnected
                       ? "Connect Netlify"
-                      : deployLinks?.siteUrl
+                      : netlifyDeployment.siteUrl
                       ? "Republish with Netlify"
                       : "Publish with Netlify"}
                   </Button>
@@ -4791,18 +4814,18 @@ function ProjectContent() {
                   </div>
                 </div>
                 <div className="space-y-4 px-4 py-4">
-                  {vercelDeployLinks?.siteUrl ? (
+                  {vercelDeployment.siteUrl ? (
                     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Live URL</p>
                       <a
-                        href={vercelDeployLinks.siteUrl}
+                        href={vercelDeployment.siteUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3 text-left shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50"
                       >
                         <div className="min-w-0">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Open live site</p>
-                          <p className="mt-1 break-all text-sm font-semibold text-zinc-900">{vercelDeployLinks.siteUrl}</p>
+                          <p className="mt-1 break-all text-sm font-semibold text-zinc-900">{vercelDeployment.siteUrl}</p>
                         </div>
                         <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
                       </a>
@@ -4813,7 +4836,7 @@ function ProjectContent() {
                           className="min-h-[40px] flex-1 rounded-xl border-zinc-300 text-zinc-700"
                           onClick={async () => {
                             try {
-                              await navigator.clipboard.writeText(vercelDeployLinks.siteUrl || "")
+                              await navigator.clipboard.writeText(vercelDeployment.siteUrl || "")
                               toast({ title: "Copied", description: "Live URL copied to clipboard." })
                             } catch {
                               toast({ title: "Copy failed", description: "Could not copy live URL.", variant: "destructive" })
@@ -4828,9 +4851,9 @@ function ProjectContent() {
                           onClick={async () => {
                             try {
                               if (navigator.share) {
-                                await navigator.share({ title: displayProjectName, url: vercelDeployLinks.siteUrl || "" })
+                                await navigator.share({ title: displayProjectName, url: vercelDeployment.siteUrl || "" })
                               } else {
-                                await navigator.clipboard.writeText(vercelDeployLinks.siteUrl || "")
+                                await navigator.clipboard.writeText(vercelDeployment.siteUrl || "")
                                 toast({ title: "Copied", description: "Share is unavailable here, so the URL was copied instead." })
                               }
                             } catch {
@@ -4883,7 +4906,7 @@ function ProjectContent() {
                   >
                     {isVercelDeploying
                       ? "Publishing..."
-                      : vercelDeployLinks?.siteUrl
+                      : vercelDeployment.siteUrl
                       ? "Republish with Vercel"
                       : "Publish with Vercel"}
                   </Button>

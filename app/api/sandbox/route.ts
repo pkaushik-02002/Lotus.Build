@@ -167,6 +167,9 @@ async function portListening(sandbox: Sandbox, port: number): Promise<boolean> {
         if command -v lsof >/dev/null 2>&1; then
           lsof -iTCP:${port} -sTCP:LISTEN -n -P 2>/dev/null | grep -q . && echo "LISTEN" && exit 0
         fi
+        if command -v nc >/dev/null 2>&1; then
+          nc -z 127.0.0.1 ${port} >/dev/null 2>&1 && echo "LISTEN" && exit 0
+        fi
         if command -v node >/dev/null 2>&1; then
           node -e "const net=require('net');const s=net.connect(${port},'127.0.0.1');s.setTimeout(1000);s.on('connect',()=>{console.log('LISTEN');s.destroy();});s.on('timeout',()=>{console.log('NO');s.destroy();});s.on('error',()=>console.log('NO'));"
           exit 0
@@ -175,7 +178,7 @@ async function portListening(sandbox: Sandbox, port: number): Promise<boolean> {
       '`,
       5000
     )
-    return result.stdout?.trim() === "LISTEN"
+    return (result.stdout || "").includes("LISTEN")
   } catch {
     return false
   }
@@ -324,14 +327,23 @@ async function localHttpResponding(sandbox: Sandbox, port: number): Promise<bool
     const result = await cmd(
       sandbox,
       `bash -c '
+        check_node() {
+          node -e "const http=require(\"http\");const tryHost=(host)=>new Promise((resolve)=>{const r=http.get({host,port:${port},path:\"/\",timeout:4000},(res)=>{res.resume();resolve(true);});r.on(\"error\",()=>resolve(false));r.on(\"timeout\",()=>{r.destroy();resolve(false);});});(async()=>{console.log(await tryHost(\"127.0.0.1\")||await tryHost(\"localhost\")?\"OK\":\"NO\")})()"
+        }
         if command -v curl >/dev/null 2>&1; then
           code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 http://127.0.0.1:${port}/ || echo "000")
           if [ "$code" = "000" ] || [ "$code" = "000000" ]; then
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 http://localhost:${port}/ || echo "000")
           fi
-          [ "$code" != "000" ] && [ "$code" != "000000" ] && echo "OK" || echo "NO"
+          if [ "$code" != "000" ] && [ "$code" != "000000" ]; then
+            echo "OK"
+          elif command -v node >/dev/null 2>&1; then
+            check_node
+          else
+            echo "NO"
+          fi
         else
-          node -e "const http=require(\"http\");const r=http.get({host:\"127.0.0.1\",port:${port},path:\"/\",timeout:4000},(res)=>{console.log(\"OK\");res.resume();});r.on(\"error\",()=>console.log(\"NO\"));r.on(\"timeout\",()=>{r.destroy();console.log(\"NO\");});"
+          check_node
         fi
       '`,
       7000
@@ -1336,10 +1348,16 @@ export async function POST(req: Request) {
           console.log("[sandbox] Skipping install, using cached node_modules")
           send({ type: "step", step: "install", status: "success", message: "Using cached dependencies" })
         } else {
-          send({ type: "step", step: "install", status: "running", message: "Installing dependencies..." })
-          
           const installCmd = `cd ${PROJECT_DIR} && npm install --legacy-peer-deps --no-audit --no-fund 2>&1`
           let installOutput = ""
+
+          send({
+            type: "step",
+            step: "install",
+            status: "running",
+            message: "Installing dependencies...",
+            command: installCmd,
+          })
           
           try {
             const install = await cmd(sandbox, installCmd, 300000) // 5 min timeout
@@ -1359,7 +1377,14 @@ export async function POST(req: Request) {
             }
             
             await new Promise(r => setTimeout(r, 150))
-            send({ type: "step", step: "install", status: "success", message: "Dependencies installed" })
+            send({
+              type: "step",
+              step: "install",
+              status: "success",
+              message: "Dependencies installed",
+              command: installCmd,
+              output: installOutput.slice(-2000),
+            })
             
             if (projectId && currentLockHash) {
               try {
@@ -1407,10 +1432,17 @@ export async function POST(req: Request) {
           ? `Starting ${framework} dev server...`
           : `Starting ${framework} dev server (first build may take longer)...`
 
-        send({ type: "step", step: "dev", status: "running", message: devMessage })
+        const devCommand = `bash "${startScriptPath}"`
+        send({
+          type: "step",
+          step: "dev",
+          status: "running",
+          message: devMessage,
+          command: devCommand,
+        })
 
         // Start the dev server (fire and forget)
-        cmd(sandbox, `bash "${startScriptPath}"`, 0).catch((err) => {
+        cmd(sandbox, devCommand, 0).catch((err) => {
           console.error("[sandbox] Dev start wrapper error (ignored):", err)
         })
 

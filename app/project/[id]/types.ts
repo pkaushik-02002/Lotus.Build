@@ -81,7 +81,14 @@ export interface Project {
   visibility?: ProjectVisibility
   ownerId?: string
   editorIds?: string[]
+  netlifySiteId?: string
+  netlifySiteUrl?: string
+  netlifyAdminUrl?: string
+  netlifyDeployId?: string
+  netlifyDeployUrl?: string
   vercelToken?: string
+  vercelProjectName?: string
+  vercelSiteUrl?: string
   vercelDeployUrl?: string
   vercelDeploymentId?: string
   websiteSettings?: WebsiteSettings

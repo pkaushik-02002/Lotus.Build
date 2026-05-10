@@ -11,11 +11,14 @@ import {
   BookOpen,
   Brain,
   Check,
+  ChevronsDown,
+  ChevronsUp,
   ChevronRight,
   Code2,
   Copy,
   Database,
   ExternalLink,
+  FileText,
   Github,
   Globe2,
   KeyRound,
@@ -37,6 +40,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { AnimatedAIInput } from "@/components/ui/animated-ai-input"
 import { Button } from "@/components/ui/button"
 import { TokenLimitDialog } from "@/components/project/token-limit-dialog"
+import { BashTool } from "@/components/project/bash-tool"
+import { EditTool } from "@/components/project/edit-tool"
 import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/auth-context"
@@ -92,12 +97,22 @@ type DeployState = {
   adminUrl: string | null
 }
 
+type DeploymentLink = {
+  siteUrl: string
+  adminUrl?: string | null
+}
+
 type ComputerProjectIntegration = {
   name?: string
   files?: Array<{ path: string; content: string }>
   githubRepoUrl?: string
   githubRepoFullName?: string
   githubSyncedAt?: unknown
+  netlifySiteUrl?: string
+  netlifyAdminUrl?: string
+  vercelSiteUrl?: string
+  vercelDeployUrl?: string
+  vercelDeploymentId?: string
   supabaseUrl?: string
   supabaseProjectRef?: string
   envVarNames?: string[]
@@ -118,7 +133,7 @@ const STATUS_STYLES: Record<ComputerSessionStatus, string> = {
 const STATUS_LABELS: Record<ComputerSessionStatus, string> = {
   idle:     "Ready",
   planning: "Thinking",
-  running:  "Working",
+  running:  "Thinking",
   error:    "Error",
   complete: "Done",
 }
@@ -154,14 +169,6 @@ const KIND_CONFIG: Record<string, KindConfig> = {
 function getKindCfg(kind?: string): KindConfig {
   return KIND_CONFIG[kind ?? ""] ?? { icon: Zap, bg: "bg-zinc-50", border: "border-zinc-200", iconColor: "text-zinc-400", label: "" }
 }
-
-const TRANSCRIPT_PHASES = [
-  { key: "understanding" as const, label: "Assess"    },
-  { key: "research"      as const, label: "Research"  },
-  { key: "planning"      as const, label: "Plan"      },
-  { key: "code"          as const, label: "Build"     },
-  { key: "sandbox"       as const, label: "Verify"    },
-]
 
 const EVENT_TITLES: Record<string, string> = {
   "Run started":          "Starting run",
@@ -221,23 +228,21 @@ function normalizeTimeline(timeline: unknown): ComputerTimelineEvent[] {
     .sort((a, b) => a.index - b.index)
 }
 
-function getPhaseState(
-  phase: (typeof TRANSCRIPT_PHASES)[number]["key"],
-  events: ComputerTimelineEvent[]
-): "idle" | "running" | "complete" | "error" {
-  const m = events.filter((e) => e.kind === phase)
-  if (m.some((e) => e.status === "error"))                              return "error"
-  if (m.some((e) => e.status === "running"))                            return "running"
-  if (m.some((e) => e.status === "complete" || e.status === "skipped")) return "complete"
-  return "idle"
-}
-
 function getEventTitle(event: ComputerTimelineEvent) {
   return EVENT_TITLES[event.title] || event.title
 }
 
 function getLatestBrowserInspection(events: ComputerTimelineEvent[]): BrowserInspection | null {
-  const found = [...events].sort((a, b) => a.index - b.index).reverse().find((e) => {
+  const browserEvents = [...events].sort((a, b) => a.index - b.index).reverse()
+  const found = browserEvents.find((e) => {
+    const lv = e.metadata?.browserLiveUrl
+    const provider = e.metadata?.browserProvider
+    return e.kind === "browser" &&
+      e.title !== "Browser live" &&
+      provider === "firecrawl" &&
+      typeof lv === "string" &&
+      lv.startsWith("http")
+  }) || browserEvents.find((e) => {
     const lv = e.metadata?.browserLiveUrl
     const provider = e.metadata?.browserProvider
     return e.kind === "browser" &&
@@ -259,8 +264,7 @@ function getLatestBrowserInspection(events: ComputerTimelineEvent[]): BrowserIns
 }
 
 function getBrowserProviderLabel(provider?: string) {
-  if (provider === "firecrawl") return "Firecrawl Browser"
-  return "Remote Browser"
+  return "Browser"
 }
 
 function isTokenLimitError(message?: string | null) {
@@ -292,6 +296,26 @@ const INITIAL_DEPLOY_STATE: DeployState = {
 
 function getDeployProviderLabel(provider: DeployProvider) {
   return provider === "netlify" ? "Netlify" : "Vercel"
+}
+
+function getProjectDeploymentLinks(project?: ComputerProjectIntegration | null): Partial<Record<DeployProvider, DeploymentLink>> {
+  const links: Partial<Record<DeployProvider, DeploymentLink>> = {}
+  if (project?.netlifySiteUrl) {
+    links.netlify = {
+      siteUrl: project.netlifySiteUrl,
+      adminUrl: project.netlifyAdminUrl,
+    }
+  }
+  const vercelSiteUrl = project?.vercelSiteUrl || project?.vercelDeployUrl
+  if (vercelSiteUrl) {
+    links.vercel = {
+      siteUrl: vercelSiteUrl,
+      adminUrl: project?.vercelDeploymentId
+        ? `https://vercel.com/dashboard/deployments/${project.vercelDeploymentId}`
+        : null,
+    }
+  }
+  return links
 }
 
 function getDeployErrorMessage(value: unknown) {
@@ -344,16 +368,20 @@ function DeployButton({
   projectId,
   open,
   state,
+  deploymentLinks,
   onOpenChange,
   onDeploy,
 }: {
   projectId?: string
   open: boolean
   state: DeployState
+  deploymentLinks?: Partial<Record<DeployProvider, DeploymentLink>>
   onOpenChange: (open: boolean) => void
   onDeploy: (provider: DeployProvider) => void
 }) {
   if (!projectId) return null
+  const visibleStateSiteUrl = state.siteUrl || (state.provider ? deploymentLinks?.[state.provider]?.siteUrl ?? null : null)
+  const hasStoredDeployments = Boolean(deploymentLinks?.netlify?.siteUrl || deploymentLinks?.vercel?.siteUrl)
 
   return (
     <div className="relative">
@@ -388,8 +416,28 @@ function DeployButton({
               </button>
             ))}
           </div>
+          {hasStoredDeployments && (
+            <div className="mt-2 space-y-1.5">
+              {(["netlify", "vercel"] as DeployProvider[]).map((provider) => {
+                const link = deploymentLinks?.[provider]
+                if (!link?.siteUrl) return null
+                return (
+                  <a
+                    key={provider}
+                    href={link.siteUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[11px] font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50"
+                  >
+                    <span className="truncate">{getDeployProviderLabel(provider)} live site</span>
+                    <ExternalLink className="h-3 w-3 shrink-0 text-zinc-500" />
+                  </a>
+                )
+              })}
+            </div>
+          )}
 
-          {(state.step || state.error || state.siteUrl) && (
+          {(state.step || state.error || visibleStateSiteUrl) && (
             <div className="mt-2 rounded-xl border border-zinc-200 bg-[#faf9f5] p-2.5">
               <div className="flex items-center gap-1.5">
                 {state.busy && <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />}
@@ -406,9 +454,9 @@ function DeployButton({
                   currentStep={state.step}
                   className="mt-1.5"
                 />
-              {state.siteUrl && (
+              {visibleStateSiteUrl && (
                 <a
-                  href={state.siteUrl}
+                  href={visibleStateSiteUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-2.5 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-500 py-2 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-emerald-600 active:scale-[0.98]"
@@ -595,60 +643,6 @@ function IntegrationsButton({
   )
 }
 
-function StepStrip({ events, status }: { events: ComputerTimelineEvent[]; status: ComputerSessionStatus }) {
-  return (
-    <div className="flex min-w-max items-center gap-2">
-      {TRANSCRIPT_PHASES.map((phase, i) => {
-        const state = getPhaseState(phase.key, events)
-        const prev  = i > 0 ? getPhaseState(TRANSCRIPT_PHASES[i - 1].key, events) : null
-        return (
-          <div key={phase.key} className="flex shrink-0 items-center gap-2">
-            {i > 0 && (
-              <div className={cn(
-                "h-px w-8 transition-colors duration-300",
-                prev === "complete" ? "bg-zinc-400" : "bg-zinc-200"
-              )} />
-            )}
-            <div className="flex items-center gap-2">
-              <div className={cn(
-                "flex h-2 w-2 shrink-0 items-center justify-center rounded-full transition-all duration-200",
-                state === "complete" && "bg-zinc-900",
-                state === "running"  && "bg-zinc-900 ring-4 ring-zinc-200",
-                state === "error"    && "bg-red-500 ring-4 ring-red-100",
-                state === "idle"     && "bg-zinc-300"
-              )}>
-                {state === "running" && (
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-zinc-900 opacity-20" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-zinc-900" />
-                  </span>
-                )}
-              </div>
-              {state === "running" ? (
-                <TextShimmer
-                  className="bg-gradient-to-r from-zinc-500 via-zinc-950 to-zinc-500 text-[11px] font-medium"
-                  duration={1.45}
-                >
-                  {phase.label}
-                </TextShimmer>
-              ) : (
-                <span className={cn(
-                  "text-[11px] font-medium",
-                  state === "complete" && "text-zinc-700",
-                  state === "error"    && "text-red-500",
-                  state === "idle"     && "text-zinc-400"
-                )}>
-                  {phase.label}
-                </span>
-              )}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 // ─── Plan description renderer ────────────────────────────────────────────────
 
 function renderInline(text: string): React.ReactNode {
@@ -685,7 +679,94 @@ function PlanDescription({ text }: { text: string }) {
 
 // ─── Feed item ────────────────────────────────────────────────────────────────
 
+function getPlanFileName(event: ComputerTimelineEvent) {
+  const rawId = event.id?.trim()
+  if (!rawId) return "plan-working.md"
+  return `plan-${rawId.slice(0, 8)}.md`
+}
+
+function PlanTool({ event }: { event: ComputerTimelineEvent }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const summary = event.description?.trim() || ""
+  const hasSummary = summary.length > 0
+
+  return (
+    <div className="my-3 overflow-hidden rounded-[10px] border border-[#e0dbd1] bg-[#f3f1ec] shadow-sm">
+      <div className="flex h-8 items-center justify-between pl-3 pr-2.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          <span className="truncate text-xs text-zinc-500">{getPlanFileName(event)}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          aria-label={isExpanded ? "Collapse plan" : "Expand plan"}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-[4px] text-zinc-500 transition-colors hover:bg-white hover:text-zinc-900"
+        >
+          {isExpanded ? <ChevronsUp className="h-3.5 w-3.5" /> : <ChevronsDown className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+
+      <div className="border-t border-[#e0dbd1] bg-white pt-2">
+        <div className="px-3 text-sm font-medium text-zinc-900">Plan drafted</div>
+
+        {hasSummary ? (
+          <div className="relative mt-1">
+            <div className={cn("px-3 pb-2 text-zinc-500", !isExpanded && "max-h-[94px] overflow-hidden")}>
+              <PlanDescription text={summary} />
+            </div>
+            {!isExpanded && (
+              <div className="absolute inset-x-0 bottom-0 h-16 px-3 pb-2">
+                <div className="absolute inset-x-0 bottom-0 h-full bg-gradient-to-b from-transparent to-white" />
+                <div className="relative flex h-full items-end">
+                  <button
+                    type="button"
+                    onClick={() => setIsExpanded(true)}
+                    className="-mx-1.5 h-5 rounded-[4px] px-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-900"
+                  >
+                    Read detailed plan
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="px-3 pb-2 text-xs text-zinc-500">No plan summary provided.</div>
+        )}
+
+        {(isExpanded || !hasSummary) && (
+          <div className="mt-2 flex items-center justify-between border-t border-[#e0dbd1] bg-[#f3f1ec] py-2 pl-3.5 pr-2">
+            <button
+              type="button"
+              onClick={() => setIsExpanded((prev) => !prev)}
+              className="-mx-1.5 h-5 rounded-[4px] px-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-900"
+            >
+              {isExpanded ? "Hide detailed plan" : "Read detailed plan"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const PROSE_EVENTS = ["Understanding insight", "Research insight", "Browser insight", "Build approach"]
+
+function getGeneratingFilePath(event: ComputerTimelineEvent) {
+  if (typeof event.metadata?.filePath === "string") return event.metadata.filePath
+  return event.title.startsWith("Generating ") ? event.title.slice("Generating ".length).trim() : undefined
+}
+
+function getEditToolVariant(event: ComputerTimelineEvent): "edit" | "write" {
+  return event.metadata?.editVariant === "edit" ? "edit" : "write"
+}
+
+function getCommandMetadata(event: ComputerTimelineEvent) {
+  const command = typeof event.metadata?.command === "string" ? event.metadata.command : ""
+  if (!command.trim()) return null
+  const output = typeof event.metadata?.commandOutput === "string" ? event.metadata.commandOutput : undefined
+  return { command, output }
+}
 
 function FeedItem({ event, isLatest }: { event: ComputerTimelineEvent; isLatest: boolean }) {
   const isComplete = event.status === "complete"
@@ -699,11 +780,34 @@ function FeedItem({ event, isLatest }: { event: ComputerTimelineEvent; isLatest:
 
   // Plan card — rendered only once when planning completes
   if (event.title === "Planning execution" && isComplete && event.description) {
+    return <PlanTool event={event} />
+  }
+
+  const commandMetadata = getCommandMetadata(event)
+  if (commandMetadata) {
     return (
-      <div className="my-3 rounded-2xl border border-[#e0dbd1] bg-white px-4 py-3.5 shadow-sm">
-        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Plan drafted</p>
-        <PlanDescription text={event.description} />
-      </div>
+      <BashTool
+        state={isRunning ? "running" : "idle"}
+        command={commandMetadata.command}
+        output={commandMetadata.output || description}
+        className="my-2"
+      />
+    )
+  }
+
+  if (event.title === "Generating code") {
+    return <EditTool state={isError ? "completed" : isComplete ? "completed" : "waiting"} variant="write" className="my-2" />
+  }
+
+  const generatedFilePath = getGeneratingFilePath(event)
+  if (generatedFilePath && event.kind === "code") {
+    return (
+      <EditTool
+        state={isRunning ? "pending" : "completed"}
+        variant={getEditToolVariant(event)}
+        filePath={generatedFilePath}
+        className="my-2"
+      />
     )
   }
 
@@ -717,7 +821,7 @@ function FeedItem({ event, isLatest }: { event: ComputerTimelineEvent; isLatest:
             <ChevronRight className="h-2.5 w-2.5 text-zinc-400 transition-transform group-data-[state=open]/collapsible:rotate-90" />
           </div>
           {isRunning ? (
-            <TextShimmer className="text-[11px] font-semibold uppercase tracking-[0.14em] bg-gradient-to-r from-zinc-400 via-zinc-950 to-zinc-400" duration={2}>
+            <TextShimmer className="text-[11px] font-semibold uppercase tracking-[0.14em] bg-gradient-to-r from-zinc-400 via-zinc-950 to-zinc-400">
               {title}
             </TextShimmer>
           ) : (
@@ -755,7 +859,7 @@ function FeedItem({ event, isLatest }: { event: ComputerTimelineEvent; isLatest:
       </div>
       <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
         {isRunning ? (
-          <TextShimmer className="bg-gradient-to-r from-zinc-400 via-zinc-950 to-zinc-400 text-[14px] font-medium" duration={2}>
+          <TextShimmer className="bg-gradient-to-r from-zinc-400 via-zinc-950 to-zinc-400 text-[14px] font-medium">
             {title}
           </TextShimmer>
         ) : (
@@ -910,7 +1014,7 @@ function AgentFeed({
       <AnimatePresence initial={false}>
         {isStarting && (
           <motion.div key="optimistic" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="py-1">
-            <TextShimmer className="bg-gradient-to-r from-zinc-500 via-zinc-950 to-zinc-500 font-mono text-[13px] font-semibold" duration={1.45}>
+            <TextShimmer className="bg-gradient-to-r from-zinc-500 via-zinc-950 to-zinc-500 font-mono text-[13px] font-semibold">
               Starting agent...
             </TextShimmer>
           </motion.div>
@@ -952,8 +1056,8 @@ function AgentFeed({
       {/* Running shimmer */}
       <AnimatePresence>
         {isRunning && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }} className="py-2">
-            <TextShimmer className="text-[12px] text-zinc-400" duration={1.8}>
+          <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }} className="py-3">
+            <TextShimmer className="bg-gradient-to-r from-zinc-500 via-zinc-950 to-zinc-500 text-[14px] font-medium">
               {STATUS_LABELS[status]}
             </TextShimmer>
           </motion.div>
@@ -996,7 +1100,7 @@ function ResearchPanel({ events }: { events: ComputerTimelineEvent[] }) {
     )
   }
   return (
-    <div className="space-y-3 p-4 sm:p-5">
+    <div className="h-full min-h-0 space-y-3 overflow-y-auto p-4 [scrollbar-width:thin] sm:p-5">
       <AnimatePresence initial={false}>
         {evidence.map((event, i) => (
           <motion.div key={event.id ?? `${event.title}-${i}`} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.12 }}
@@ -1278,6 +1382,11 @@ export default function ComputerPage() {
           githubRepoUrl: typeof data.githubRepoUrl === "string" ? data.githubRepoUrl : undefined,
           githubRepoFullName: typeof data.githubRepoFullName === "string" ? data.githubRepoFullName : undefined,
           githubSyncedAt: data.githubSyncedAt,
+          netlifySiteUrl: typeof data.netlifySiteUrl === "string" ? data.netlifySiteUrl : undefined,
+          netlifyAdminUrl: typeof data.netlifyAdminUrl === "string" ? data.netlifyAdminUrl : undefined,
+          vercelSiteUrl: typeof data.vercelSiteUrl === "string" ? data.vercelSiteUrl : undefined,
+          vercelDeployUrl: typeof data.vercelDeployUrl === "string" ? data.vercelDeployUrl : undefined,
+          vercelDeploymentId: typeof data.vercelDeploymentId === "string" ? data.vercelDeploymentId : undefined,
           supabaseUrl: typeof data.supabaseUrl === "string" ? data.supabaseUrl : undefined,
           supabaseProjectRef: typeof data.supabaseProjectRef === "string" ? data.supabaseProjectRef : undefined,
           envVarNames: Array.from(new Set([...(current?.envVarNames || []), ...savedEnvNames])),
@@ -1461,6 +1570,14 @@ export default function ComputerPage() {
 
   const handleDeploy = useCallback(async (provider: DeployProvider) => {
     if (!session?.projectId || deployState.busy) return
+    const existingSiteUrl = provider === "netlify"
+      ? projectIntegration?.netlifySiteUrl ?? null
+      : projectIntegration?.vercelSiteUrl ?? projectIntegration?.vercelDeployUrl ?? null
+    const existingAdminUrl = provider === "netlify"
+      ? projectIntegration?.netlifyAdminUrl ?? null
+      : projectIntegration?.vercelDeploymentId
+        ? `https://vercel.com/dashboard/deployments/${projectIntegration.vercelDeploymentId}`
+        : null
 
     setDeployOpen(true)
     setDeployState({
@@ -1469,8 +1586,8 @@ export default function ComputerPage() {
       step: "Starting",
       logs: [],
       error: null,
-      siteUrl: null,
-      adminUrl: null,
+      siteUrl: existingSiteUrl,
+      adminUrl: existingAdminUrl,
     })
 
     try {
@@ -1562,7 +1679,7 @@ export default function ComputerPage() {
     } finally {
       setDeployState((current) => ({ ...current, busy: false }))
     }
-  }, [deployState.busy, getOptionalAuthHeader, session?.projectId, startNetlifyConnection])
+  }, [deployState.busy, getOptionalAuthHeader, projectIntegration?.netlifyAdminUrl, projectIntegration?.netlifySiteUrl, projectIntegration?.vercelDeployUrl, projectIntegration?.vercelDeploymentId, projectIntegration?.vercelSiteUrl, session?.projectId, startNetlifyConnection])
 
   const handleGithubSync = useCallback(async () => {
     if (!session?.projectId || integrationBusy) return
@@ -1740,7 +1857,6 @@ export default function ComputerPage() {
   if (error || !session) return <ErrorState message={error ?? "Session not found or access denied."} />
 
   const isActive     = session.status === "running" || session.status === "planning"
-  const visibleEvents = session.timeline.filter((e) => e.title !== "Session created")
   const hasPreview    = Boolean(session.previewUrl)
   const hasBrowser    = Boolean(browserInspection)
   const hasResearch   = session.timeline.some((e) => (e.kind === "research" || e.kind === "browser") && e.description?.trim())
@@ -1836,6 +1952,7 @@ export default function ComputerPage() {
                 projectId={session.projectId}
                 open={deployOpen}
                 state={deployState}
+                deploymentLinks={getProjectDeploymentLinks(projectIntegration)}
                 onOpenChange={setDeployOpen}
                 onDeploy={handleDeploy}
               />
@@ -1864,7 +1981,7 @@ export default function ComputerPage() {
               {isActive && (
                 <div className="flex shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-white px-2.5 py-1">
                   <PulseDot color="bg-zinc-900" active />
-                  <TextShimmer className="bg-gradient-to-r from-zinc-500 via-zinc-950 to-zinc-500 text-[11px] font-medium" duration={1.45}>
+                  <TextShimmer className="bg-gradient-to-r from-zinc-500 via-zinc-950 to-zinc-500 text-[11px] font-medium">
                     {STATUS_LABELS[session.status]}
                   </TextShimmer>
                 </div>
@@ -1876,13 +1993,6 @@ export default function ComputerPage() {
               )}
             </div>
           </div>
-
-          {/* Step strip */}
-          {visibleEvents.length > 0 && (
-            <div className="shrink-0 overflow-x-auto border-b border-[#ede8e0] bg-[#fcfaf6] px-4 py-3 [scrollbar-width:none]">
-              <StepStrip events={session.timeline} status={session.status} />
-            </div>
-          )}
 
           {/* Feed scroll area */}
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-width:thin] sm:px-5">

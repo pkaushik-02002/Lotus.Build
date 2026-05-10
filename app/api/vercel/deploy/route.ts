@@ -25,8 +25,13 @@ async function getProjectWithVercel(projectId: string) {
   const files = Array.isArray(data?.files) ? data.files : null
   const token = typeof data?.vercelToken === "string" ? data.vercelToken : null
   const teamId = typeof data?.vercelTeamId === "string" ? data.vercelTeamId : null
-  const name = toVercelProjectName(projectId)
-  return { data, files, token, teamId, name }
+  const name = typeof data?.vercelProjectName === "string" && data.vercelProjectName.trim()
+    ? data.vercelProjectName.trim()
+    : toVercelProjectName(projectId)
+  const siteUrl = typeof data?.vercelSiteUrl === "string" && data.vercelSiteUrl.trim()
+    ? data.vercelSiteUrl.trim()
+    : null
+  return { data, files, token, teamId, name, siteUrl }
 }
 
 function normalizeSourceImports(files: any[]) {
@@ -134,14 +139,18 @@ export async function POST(req: Request) {
         const deploymentId = deploy?.id || null
         const deployUrl = deploy?.url ? `https://${deploy.url}` : null
         const alias = Array.isArray(deploy?.alias) && deploy.alias[0] ? deploy.alias[0] : null
-        const siteUrl = alias ? (alias.startsWith("http") ? alias : `https://${alias}`) : deployUrl
+        const siteUrl = project.siteUrl || (alias
+          ? (alias.startsWith("http") ? alias : `https://${alias}`)
+          : `https://${project.name}.vercel.app`)
         const adminUrl = deploymentId
           ? `https://vercel.com/dashboard/deployments/${deploymentId}`
           : null
 
         await adminDb.collection("projects").doc(projectId).set(
           {
-            vercelDeployUrl: siteUrl || deployUrl,
+            vercelProjectName: project.name,
+            vercelSiteUrl: siteUrl,
+            vercelDeployUrl: deployUrl || siteUrl,
             vercelDeploymentId: deploymentId,
             vercelUpdatedAt: new Date(),
           },

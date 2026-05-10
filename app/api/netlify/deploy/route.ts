@@ -158,13 +158,11 @@ async function zipDistFromSandbox(sandbox: Sandbox) {
 
 export async function POST(req: Request) {
   let projectId = ""
-  let requestedSiteId: string | null = null
   let requestedSiteName: string | null = null
 
   try {
     const body = await req.json()
     projectId = String(body?.projectId || "")
-    requestedSiteId = body?.siteId ? String(body.siteId) : null
     requestedSiteName = body?.siteName ? String(body.siteName) : null
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
@@ -342,7 +340,7 @@ export async function POST(req: Request) {
 
         send({ type: "step", step: "upload", status: "running", message: "Uploading to Netlify..." })
 
-        let siteId: string | null = requestedSiteId || project.data?.netlifySiteId || null
+        let siteId: string | null = project.data?.netlifySiteId || null
         let siteUrl: string | null = project.data?.netlifySiteUrl || null
         let adminUrl: string | null = project.data?.netlifyAdminUrl || null
 
@@ -382,7 +380,7 @@ export async function POST(req: Request) {
 
           const s = (await createSiteRes.json()) as any
           siteId = s?.id
-          siteUrl = s?.url || s?.ssl_url || null
+          siteUrl = s?.ssl_url || s?.url || null
           adminUrl = s?.admin_url || null
         } else if (requestedSiteName) {
           // Existing site: try to rename it when user provides a new name
@@ -400,7 +398,7 @@ export async function POST(req: Request) {
 
             if (updateSiteRes.ok) {
               const s = (await updateSiteRes.json()) as any
-              siteUrl = s?.url || s?.ssl_url || siteUrl
+              siteUrl = s?.ssl_url || s?.url || siteUrl
               adminUrl = s?.admin_url || adminUrl
             } else {
               const responseText = await updateSiteRes.text().catch(() => "")
@@ -430,7 +428,8 @@ export async function POST(req: Request) {
 
         const deploy = (await deployRes.json()) as any
         const deployId = deploy?.id || deploy?.deploy_id || null
-        const deployUrl = deploy?.deploy_ssl_url || deploy?.ssl_url || deploy?.deploy_url || null
+        const deployUrl = deploy?.deploy_ssl_url || deploy?.deploy_url || null
+        siteUrl = siteUrl || deploy?.ssl_url || deploy?.url || null
 
         await adminDb.collection("projects").doc(projectId).set(
           {
